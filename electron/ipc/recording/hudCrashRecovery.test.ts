@@ -1,0 +1,245 @@
+import { EventEmitter } from "node:events";
+import { describe, expect, it, vi } from "vitest";
+import {
+	createHudCrashRecoveryDeps,
+	type HudCrashRecoveryDeps,
+	type NativeCaptureState,
+	stopRecordingWhenHudGoes,
+} from "./hudCrashRecovery";
+
+function setup(overrides: Partial<HudCrashRecoveryDeps> = {}) {
+	const hud = new EventEmitter();
+	const deps = {
+		startSettled: vi.fn(async () => {}),
+		isRecordingWithoutStopRequest: vi.fn(() => true),
+		isUserRecording: vi.fn(() => true),
+		stopRecording: vi.fn(async () => ({ success: true, path: "/rec/recording-1.mp4" })),
+		finishRecording: vi.fn(async (stopped) => stopped),
+		discardRecording: vi.fn(async () => {}),
+		setRecordingState: vi.fn(),
+		reportRecovered: vi.fn(async () => {}),
+		...overrides,
+	} satisfies HudCrashRecoveryDeps;
+	return { hud, deps };
+}
+
+const crash = (hud: EventEmitter, reason = "crashed") =>
+	hud.emit("render-process-gone", {}, { reason });
+
+describe("stopRecordingWhenHudGoes", () => {
+	it("stops, finishes and reports the recording, and leaves the recording state", async () => {
+		const { hud, deps } = setup({
+			finishRecording: vi.fn(async () => ({
+				success: true,
+				path: "/rec/recording-1.muxed.mp4",
+			})),
+		});
+		stopRecordingWhenHudGoes(hud, deps);
+
+		crash(hud);
+
+		await vi.waitFor(() => expect(deps.reportRecovered).toHaveBeenCalled());
+		expect(deps.stopRecording).toHaveBeenCalledTimes(1);
+		expect(deps.finishRecording).toHaveBeenCalledWith({
+			success: true,
+			path: "/rec/recording-1.mp4",
+		});
+		expect(deps.setRecordingState).toHaveBeenCalledWith(false);
+		expect(deps.reportRecovered).toHaveBeenCalledWith(
+			{ success: true, path: "/rec/recording-1.muxed.mp4" },
+			"crashed",
+		);
+		expect(deps.discardRecording).not.toHaveBeenCalled();
+	});
+
+	it("does nothing when no recording is running or Stop was already requested", async () => {
+		const { hud, deps } = setup({ isRecordingWithoutStopRequest: vi.fn(() => false) });
+		stopRecordingWhenHudGoes(hud, deps);
+
+		crash(hud);
+
+		await vi.waitFor(() => expect(deps.isRecordingWithoutStopRequest).toHaveBeenCalled());
+		expect(deps.stopRecording).not.toHaveBeenCalled();
+		expect(deps.setRecordingState).not.toHaveBeenCalled();
+	});
+
+	it("ignores a clean renderer exit", async () => {
+		const { hud, deps } = setup();
+		stopRecordingWhenHudGoes(hud, deps);
+
+		crash(hud, "clean-exit");
+
+		await Promise.resolve();
+		expect(deps.startSettled).not.toHaveBeenCalled();
+		expect(deps.stopRecording).not.toHaveBeenCalled();
+	});
+
+	it("stops and deletes a capture that was only warm-started for the countdown", async () => {
+		const { hud, deps } = setup({ isUserRecording: vi.fn(() => false) });
+		stopRecordingWhenHudGoes(hud, deps);
+
+		crash(hud);
+
+		await vi.waitFor(() => expect(deps.discardRecording).toHaveBeenCalled());
+		expect(deps.discardRecording).toHaveBeenCalledWith("/rec/recording-1.mp4");
+		expect(deps.finishRecording).not.toHaveBeenCalled();
+		expect(deps.setRecordingState).not.toHaveBeenCalled();
+		expect(deps.reportRecovered).not.toHaveBeenCalled();
+	});
+
+	it("waits for a running start before it decides", async () => {
+		let settle = () => {};
+		let recording = false;
+		const { hud, deps } = setup({
+			startSettled: vi.fn(() => new Promise<void>((resolve) => (settle = resolve))),
+			isRecordingWithoutStopRequest: vi.fn(() => recording),
+			isUserRecording: vi.fn(() => false),
+		});
+		stopRecordingWhenHudGoes(hud, deps);
+
+		crash(hud);
+		await Promise.resolve();
+		expect(deps.stopRecording).not.toHaveBeenCalled();
+		// The helper comes up after the HUD died.
+		recording = true;
+		settle();
+
+		await vi.waitFor(() => expect(deps.discardRecording).toHaveBeenCalled());
+		expect(deps.stopRecording).toHaveBeenCalledTimes(1);
+	});
+
+	it("still leaves the recording state and reports when stopping fails", async () => {
+		const { hud, deps } = setup({
+			stopRecording: vi.fn(async () => {
+				throw new Error("helper gone");
+			}),
+		});
+		stopRecordingWhenHudGoes(hud, deps);
+
+		crash(hud, "oom");
+
+		await vi.waitFor(() => expect(deps.reportRecovered).toHaveBeenCalled());
+		expect(deps.setRecordingState).toHaveBeenCalledWith(false);
+		expect(deps.reportRecovered).toHaveBeenCalledWith(
+			{ success: false, error: "Error: helper gone" },
+			"oom",
+		);
+	});
+
+	it("does not leave an unhandled rejection when the dialog fails", async () => {
+		const unhandled = vi.fn();
+		process.on("unhandledRejection", unhandled);
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const { hud, deps } = setup({
+				reportRecovered: vi.fn(async () => {
+					throw new Error("no display");
+				}),
+			});
+			stopRecordingWhenHudGoes(hud, deps);
+
+			crash(hud);
+
+			await vi.waitFor(() =>
+				expect(error).toHaveBeenCalledWith(
+					"[hud-crash-recovery] Recovery failed:",
+					expect.any(Error),
+				),
+			);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(unhandled).not.toHaveBeenCalled();
+		} finally {
+			process.off("unhandledRejection", unhandled);
+			error.mockRestore();
+		}
+	});
+
+	it("adds one listener per HUD however many recordings it starts", () => {
+		const { hud, deps } = setup();
+		for (let i = 0; i < 20; i++) stopRecordingWhenHudGoes(hud, deps);
+
+		expect(hud.listenerCount("render-process-gone")).toBe(1);
+	});
+});
+
+describe("createHudCrashRecoveryDeps", () => {
+	function platform(state: Partial<NativeCaptureState>) {
+		const capture: NativeCaptureState = {
+			macActive: false,
+			macStopRequested: false,
+			windowsActive: false,
+			windowsStopRequested: false,
+			userRecording: true,
+			...state,
+		};
+		const io = {
+			captureState: () => capture,
+			startSettled: vi.fn(async () => {}),
+			stopNativeScreenRecording: vi.fn(async () => {
+				// The real stop clears the active flags before it returns.
+				capture.macActive = false;
+				capture.windowsActive = false;
+				return { success: true, path: "C:/rec/recording-1.mp4" };
+			}),
+			muxNativeWindowsRecording: vi.fn(async () => ({
+				success: true,
+				path: "C:/rec/recording-1.mp4",
+				message: "muxed",
+			})),
+			clearWindowsPendingVideo: vi.fn(),
+			deleteFile: vi.fn(async () => {}),
+			telemetryPathFor: (videoPath: string) => `${videoPath}.cursor.json`,
+			setRecordingState: vi.fn(),
+			reportRecovered: vi.fn(async () => {}),
+		};
+		const hud = new EventEmitter();
+		stopRecordingWhenHudGoes(hud, createHudCrashRecoveryDeps(io));
+		return { io, crash: () => crash(hud) };
+	}
+
+	it("muxes the audio on Windows, as the renderer would after a stop", async () => {
+		const { io, crash } = platform({ windowsActive: true });
+
+		crash();
+
+		await vi.waitFor(() => expect(io.reportRecovered).toHaveBeenCalled());
+		expect(io.muxNativeWindowsRecording).toHaveBeenCalledTimes(1);
+		expect(io.reportRecovered).toHaveBeenCalledWith(
+			{ success: true, path: "C:/rec/recording-1.mp4", message: "muxed" },
+			"crashed",
+		);
+		expect(io.setRecordingState).toHaveBeenCalledWith(false);
+	});
+
+	it("does not mux on macOS", async () => {
+		const { io, crash } = platform({ macActive: true });
+
+		crash();
+
+		await vi.waitFor(() => expect(io.reportRecovered).toHaveBeenCalled());
+		expect(io.muxNativeWindowsRecording).not.toHaveBeenCalled();
+	});
+
+	it("deletes a Windows countdown capture and its telemetry, without a mux", async () => {
+		const { io, crash } = platform({ windowsActive: true, userRecording: false });
+
+		crash();
+
+		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(2));
+		expect(io.clearWindowsPendingVideo).toHaveBeenCalled();
+		expect(io.deleteFile).toHaveBeenNthCalledWith(1, "C:/rec/recording-1.mp4");
+		expect(io.deleteFile).toHaveBeenNthCalledWith(2, "C:/rec/recording-1.mp4.cursor.json");
+		expect(io.muxNativeWindowsRecording).not.toHaveBeenCalled();
+		expect(io.reportRecovered).not.toHaveBeenCalled();
+	});
+
+	it("leaves a Windows capture alone once its stop was requested", async () => {
+		const { io, crash } = platform({ windowsActive: true, windowsStopRequested: true });
+
+		crash();
+
+		await vi.waitFor(() => expect(io.startSettled).toHaveBeenCalled());
+		await Promise.resolve();
+		expect(io.stopNativeScreenRecording).not.toHaveBeenCalled();
+	});
+});
