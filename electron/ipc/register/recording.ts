@@ -82,7 +82,7 @@ import {
 	RecordingFileStreams,
 } from "../recording/recordingFileStreams";
 import { resolveRecordedVideoStoragePath } from "../recording/storagePath";
-import { writeWebmDuration } from "../recording/webmDuration";
+import { finishWebmRecording, remuxH264WebmToMp4 } from "../recording/webmDuration";
 import {
 	attachWindowsCaptureLifecycle,
 	isNativeWindowsCaptureAvailable,
@@ -170,19 +170,20 @@ const execFileAsync = promisify(execFile);
 
 const recordingFileStreams = new RecordingFileStreams();
 /**
- * Post-processing for a streamed recording. It must never cost the recording: on any error,
- * including a missing ffmpeg, the file is kept as written.
+ * Post-processing for a streamed recording: an H.264 webcam WebM becomes an MP4, any other
+ * WebM gets its duration (finishWebmRecording). It must never cost the recording: on any
+ * error, including a missing ffmpeg, the file is kept as written.
  */
 async function finishStreamedRecording(filePath: string): Promise<string> {
 	if (!filePath.toLowerCase().endsWith(".webm")) {
 		return filePath;
 	}
 	try {
-		await writeWebmDuration(getFfmpegBinaryPath(), filePath);
+		return await finishWebmRecording(getFfmpegBinaryPath(), filePath);
 	} catch (error) {
-		console.warn("Failed to write WebM duration; keeping the recording as written:", error);
+		console.warn("Failed to finish the WebM recording; keeping it as written:", error);
+		return filePath;
 	}
-	return filePath;
 }
 
 function closeRecordingFileStreamsWhenOwnerGoes(owner: Electron.WebContents) {
@@ -191,6 +192,8 @@ function closeRecordingFileStreamsWhenOwnerGoes(owner: Electron.WebContents) {
 			console.warn(
 				`Renderer went away during recording; kept ${stream.bytesWritten} bytes at ${stream.path}`,
 			);
+			// Finish it like a normal save, so an H.264 webcam WebM becomes a playable MP4.
+			void finishStreamedRecording(stream.path);
 		}
 	});
 }
@@ -1853,7 +1856,18 @@ export function registerRecordingHandlers(
 			const recordingsDir = await getRecordingsDir();
 			const videoPath = resolveRecordedVideoStoragePath(recordingsDir, fileName);
 			await fs.writeFile(videoPath, Buffer.from(videoData));
-			return await finalizeStoredVideo(videoPath);
+			// H.264 in WebM (the webcam's format) becomes an MP4 here as well. The renderer
+			// already wrote the WebM duration on this path.
+			let finalPath = videoPath;
+			if (videoPath.toLowerCase().endsWith(".webm")) {
+				try {
+					finalPath =
+						(await remuxH264WebmToMp4(getFfmpegBinaryPath(), videoPath)) ?? videoPath;
+				} catch (error) {
+					console.warn("Failed to remux the WebM; keeping it as written:", error);
+				}
+			}
+			return await finalizeStoredVideo(finalPath);
 		} catch (error) {
 			console.error("Failed to store video:", error);
 			return {
