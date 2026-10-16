@@ -76,7 +76,9 @@ import {
 	waitForNativeCaptureStart,
 	waitForNativeCaptureStop,
 } from "../recording/mac";
+import { RecordingFileStreams } from "../recording/recordingFileStreams";
 import { resolveRecordedVideoStoragePath } from "../recording/storagePath";
+import { writeWebmDuration } from "../recording/webmDuration";
 import {
 	attachWindowsCaptureLifecycle,
 	isNativeWindowsCaptureAvailable,
@@ -161,6 +163,17 @@ import { getSourceArea } from "../sourceArea";
 import { bringSelectedWindowForward } from "./sources";
 
 const execFileAsync = promisify(execFile);
+
+const recordingFileStreams = new RecordingFileStreams();
+function closeRecordingFileStreamsWhenOwnerGoes(owner: Electron.WebContents) {
+	recordingFileStreams.closeWhenOwnerGoes(owner, (closed) => {
+		for (const stream of closed) {
+			console.warn(
+				`Renderer went away during recording; kept ${stream.bytesWritten} bytes at ${stream.path}`,
+			);
+		}
+	});
+}
 
 async function writeWindowsRecordingDiagnostics(
 	videoPath: string | null | undefined,
@@ -1828,6 +1841,77 @@ export function registerRecordingHandlers(
 				message: "Failed to store video",
 				error: String(error),
 			};
+		}
+	});
+
+	ipcMain.handle("open-recording-file-stream", async (event, fileName: unknown) => {
+		try {
+			const recordingsDir = await getRecordingsDir();
+			const filePath = resolveRecordedVideoStoragePath(recordingsDir, fileName);
+			closeRecordingFileStreamsWhenOwnerGoes(event.sender);
+			const streamId = await recordingFileStreams.open(filePath, event.sender.id);
+			return { success: true, streamId };
+		} catch (error) {
+			console.error("Failed to open recording file stream:", error);
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle(
+		"append-recording-file-stream",
+		async (event, streamId: unknown, chunk: ArrayBuffer) => {
+			try {
+				if (typeof streamId !== "string" || !(chunk instanceof ArrayBuffer)) {
+					throw new Error("Invalid recording file stream chunk");
+				}
+				await recordingFileStreams.append(streamId, event.sender.id, new Uint8Array(chunk));
+				return { success: true };
+			} catch (error) {
+				console.error("Failed to append to recording file stream:", error);
+				return { success: false, error: String(error) };
+			}
+		},
+	);
+
+	ipcMain.handle(
+		"close-recording-file-stream",
+		async (event, streamId: unknown, fileName: unknown) => {
+			try {
+				if (typeof streamId !== "string") {
+					throw new Error("Invalid recording file stream");
+				}
+				const recordingsDir = await getRecordingsDir();
+				const targetPath = resolveRecordedVideoStoragePath(recordingsDir, fileName);
+				const closed = await recordingFileStreams.close(
+					streamId,
+					event.sender.id,
+					targetPath,
+				);
+				if (closed.path.toLowerCase().endsWith(".webm")) {
+					await writeWebmDuration(getFfmpegBinaryPath(), closed.path);
+				}
+				return await finalizeStoredVideo(closed.path);
+			} catch (error) {
+				console.error("Failed to close recording file stream:", error);
+				return {
+					success: false,
+					message: "Failed to store video",
+					error: String(error),
+				};
+			}
+		},
+	);
+
+	ipcMain.handle("discard-recording-file-stream", async (event, streamId: unknown) => {
+		try {
+			if (typeof streamId !== "string") {
+				throw new Error("Invalid recording file stream");
+			}
+			await recordingFileStreams.discard(streamId, event.sender.id);
+			return { success: true };
+		} catch (error) {
+			console.error("Failed to discard recording file stream:", error);
+			return { success: false, error: String(error) };
 		}
 	});
 
