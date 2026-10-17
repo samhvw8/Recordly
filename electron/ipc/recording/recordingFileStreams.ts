@@ -26,6 +26,27 @@ export class RecordingFileCloseError extends Error {
 	}
 }
 
+/**
+ * Runs the finalize step for a recording that is already on disk. If it throws, the
+ * result still names the file, so the caller can tell the user where the recording is.
+ */
+export async function finalizeKeepingPath<T>(
+	filePath: string,
+	finalize: (filePath: string) => Promise<T>,
+): Promise<T | { success: false; path: string; message: string; error: string }> {
+	try {
+		return await finalize(filePath);
+	} catch (error) {
+		console.error("Failed to finalize the recording:", error);
+		return {
+			success: false,
+			path: filePath,
+			message: `The recording was saved to ${filePath}, but it could not be finalized.`,
+			error: String(error),
+		};
+	}
+}
+
 /** The parts of Electron's WebContents that closeWhenOwnerGoes uses. */
 export type RecordingFileStreamOwner = Pick<Electron.WebContents, "id" | "on" | "removeListener">;
 

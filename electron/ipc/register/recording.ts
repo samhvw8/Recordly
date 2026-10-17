@@ -76,7 +76,11 @@ import {
 	waitForNativeCaptureStart,
 	waitForNativeCaptureStop,
 } from "../recording/mac";
-import { RecordingFileCloseError, RecordingFileStreams } from "../recording/recordingFileStreams";
+import {
+	finalizeKeepingPath,
+	RecordingFileCloseError,
+	RecordingFileStreams,
+} from "../recording/recordingFileStreams";
 import { resolveRecordedVideoStoragePath } from "../recording/storagePath";
 import { writeWebmDuration } from "../recording/webmDuration";
 import {
@@ -1903,7 +1907,10 @@ export function registerRecordingHandlers(
 					event.sender.id,
 					targetPath,
 				);
-				return await finalizeStoredVideo(await finishStreamedRecording(closed.path));
+				return await finalizeKeepingPath(
+					await finishStreamedRecording(closed.path),
+					finalizeStoredVideo,
+				);
 			} catch (error) {
 				console.error("Failed to close recording file stream:", error);
 				if (error instanceof RecordingFileCloseError) {

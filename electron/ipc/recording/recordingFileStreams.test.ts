@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	finalizeKeepingPath,
 	RecordingFileCloseError,
 	type RecordingFileStreamOwner,
 	RecordingFileStreams,
@@ -213,5 +214,24 @@ describe("RecordingFileStreams", () => {
 			streams.closeWhenOwnerGoes(o, () => {});
 			expect(listeners(o)).toEqual([1, 1, 1]);
 		});
+	});
+});
+
+describe("finalizeKeepingPath", () => {
+	it("returns the finalize result when it works", async () => {
+		const result = await finalizeKeepingPath("/rec/recording-1.webm", async (filePath) => ({
+			success: true,
+			path: filePath,
+		}));
+		expect(result).toEqual({ success: true, path: "/rec/recording-1.webm" });
+	});
+
+	it("still names the file when finalizing throws", async () => {
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		const result = await finalizeKeepingPath("/rec/recording-1.webm", async () => {
+			throw new Error("ffprobe missing");
+		});
+		error.mockRestore();
+		expect(result).toMatchObject({ success: false, path: "/rec/recording-1.webm" });
 	});
 });
