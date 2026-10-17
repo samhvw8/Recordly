@@ -76,6 +76,7 @@ import {
 	waitForNativeCaptureStart,
 	waitForNativeCaptureStop,
 } from "../recording/mac";
+import { parseNativeWebcamOutput } from "../recording/nativeWebcam";
 import { resolveRecordedVideoStoragePath } from "../recording/storagePath";
 import {
 	attachWindowsCaptureLifecycle,
@@ -758,6 +759,15 @@ export function registerRecordingHandlers(
 					config.microphoneLabel = options.microphoneLabel;
 				}
 
+				if (options?.captureWebcam) {
+					config.webcamOutputPath = path.join(
+						recordingsDir,
+						`recording-${timestamp}-webcam.mp4`,
+					);
+					config.webcamDeviceId = options.webcamDeviceId;
+					config.webcamLabel = options.webcamLabel;
+				}
+
 				if (systemAudioOutputPath) {
 					config.systemAudioOutputPath = systemAudioOutputPath;
 				}
@@ -841,9 +851,17 @@ export function registerRecordingHandlers(
 					microphonePath: nativeCaptureMicrophonePath,
 					processOutput: nativeCaptureOutputBuffer.trim() || undefined,
 				});
+				const webcam = parseNativeWebcamOutput(nativeCaptureOutputBuffer);
+				if (options?.captureWebcam && !webcam.started) {
+					console.warn(
+						"[start-native] Native webcam unavailable; the renderer records it:",
+						webcam.unavailableReason,
+					);
+				}
 				return {
 					success: true,
 					microphoneFallbackRequired: micUnavailableNatively,
+					nativeWebcam: Boolean(options?.captureWebcam && webcam.started),
 				};
 			} catch (error) {
 				console.error("Failed to start native ScreenCaptureKit recording:", error);
@@ -1223,7 +1241,15 @@ export function registerRecordingHandlers(
 					console.log("[stop-native] No separate audio tracks to mux");
 				}
 
-				return await finalizeStoredVideo(finalVideoPath);
+				const webcam = parseNativeWebcamOutput(nativeCaptureOutputBuffer);
+				const stored = await finalizeStoredVideo(finalVideoPath);
+				return webcam.webcamPath
+					? {
+							...stored,
+							webcamPath: webcam.webcamPath,
+							webcamTimeOffsetMs: webcam.timeOffsetMs,
+						}
+					: stored;
 			} catch (error) {
 				console.error("Failed to stop native ScreenCaptureKit recording:", error);
 				const fallbackPath = nativeCaptureTargetPath;

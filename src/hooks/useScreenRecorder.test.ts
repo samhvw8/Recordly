@@ -194,6 +194,23 @@ describe("stopAndDiscardNativeCapture", () => {
 		expect(deleteRecordingFile).toHaveBeenCalledWith("C:\\Recordly\\warm-start.mp4");
 	});
 
+	it("also deletes the webcam file the capture helper recorded", async () => {
+		const deleteRecordingFile = vi.fn().mockResolvedValue(undefined);
+
+		await stopAndDiscardNativeCapture({
+			stopNativeScreenRecording: vi.fn().mockResolvedValue({
+				success: true,
+				path: "/rec/recording-1.mp4",
+				webcamPath: "/rec/recording-1-webcam.mp4",
+				webcamTimeOffsetMs: 40,
+			}),
+			deleteRecordingFile,
+		});
+
+		expect(deleteRecordingFile).toHaveBeenCalledWith("/rec/recording-1-webcam.mp4");
+		expect(deleteRecordingFile).toHaveBeenCalledWith("/rec/recording-1.mp4");
+	});
+
 	it("reports an unsuccessful stop without deleting or confirming cleanup", async () => {
 		const deleteRecordingFile = vi.fn();
 
