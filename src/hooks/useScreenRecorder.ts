@@ -2452,38 +2452,6 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		startRecording();
 	};
 
-	// recordly://record/<command> links (main asks the user before anything starts a
-	// recording). The ref always holds this render's handlers, so the listener stays current.
-	const handleRecordingCommand = useRef<
-		((command: "start" | "stop" | "pause" | "resume" | "toggle") => void) | null
-	>(null);
-	handleRecordingCommand.current = (command) => {
-		switch (command) {
-			case "start":
-				if (!recordingActive.current) void toggleRecording();
-				break;
-			case "stop":
-				if (recordingActive.current) stopRecording.current();
-				break;
-			case "pause":
-				pauseRecording();
-				break;
-			case "resume":
-				resumeRecording();
-				break;
-			case "toggle":
-				void toggleRecording();
-				break;
-		}
-	};
-	useEffect(
-		() =>
-			window.electronAPI?.onRecordingCommand?.((command) =>
-				handleRecordingCommand.current?.(command),
-			),
-		[],
-	);
-
 	return {
 		recording,
 		paused,

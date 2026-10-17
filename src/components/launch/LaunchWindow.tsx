@@ -207,6 +207,44 @@ function LaunchWindowContent() {
 		syncSelectedSource,
 	]);
 
+	// recordly://record/<command> links run the HUD's own actions (main asks the user before a
+	// link starts a recording). Without a chosen screen, "start" opens the picker, like the
+	// Record button does.
+	const handleRecordingCommand = useRef<
+		((command: "start" | "stop" | "pause" | "resume" | "toggle") => void) | null
+	>(null);
+	handleRecordingCommand.current = (command) => {
+		const record = () => {
+			if (hasSelectedSource) void toggleRecording();
+			else void handlePickOnScreen();
+		};
+		switch (command) {
+			case "start":
+				if (!recording) record();
+				break;
+			case "toggle":
+				if (recording) void toggleRecording();
+				else record();
+				break;
+			case "stop":
+				if (recording) void toggleRecording();
+				break;
+			case "pause":
+				pauseRecording();
+				break;
+			case "resume":
+				resumeRecording();
+				break;
+		}
+	};
+	useEffect(
+		() =>
+			window.electronAPI?.onRecordingCommand?.((command) =>
+				handleRecordingCommand.current?.(command),
+			),
+		[],
+	);
+
 	useEffect(() => {
 		let mounted = true;
 		let selectionEventSeen = false;
