@@ -25,3 +25,18 @@ export function parseNativeWebcamOutput(output: string): NativeWebcamStatus {
 		timeOffsetMs: written ? Number(written[2]) : 0,
 	};
 }
+
+/**
+ * `stored` with the webcam file the helper finished, if it printed one. Used on every path
+ * that hands a native recording to the renderer (stop, stop-failure fallback, recovery), so
+ * the webcam layer never goes missing while its file sits on disk.
+ */
+export function withNativeWebcam<T extends object>(
+	stored: T,
+	output: string,
+): T | (T & { webcamPath: string; webcamTimeOffsetMs: number }) {
+	const webcam = parseNativeWebcamOutput(output);
+	return webcam.webcamPath
+		? { ...stored, webcamPath: webcam.webcamPath, webcamTimeOffsetMs: webcam.timeOffsetMs }
+		: stored;
+}

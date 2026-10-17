@@ -4,6 +4,7 @@ import {
 	createBrowserRecordingOptions,
 	createProcessedMicrophoneConstraints,
 	normalizeBrowserMicrophoneProfile,
+	recoveredWebcam,
 	resolveBrowserCaptureCursorPolicy,
 	shouldUseNativeWindowsCaptureForSource,
 	stopAndDiscardNativeCapture,
@@ -171,6 +172,25 @@ describe("shouldUseNativeWindowsCaptureForSource", () => {
 
 	it("keeps browser capture for non-desktop sources", () => {
 		expect(shouldUseNativeWindowsCaptureForSource({ id: "browser-tab:abc" })).toBe(false);
+	});
+});
+
+describe("recoveredWebcam", () => {
+	it("uses the webcam file the capture helper recorded", async () => {
+		const stopBrowserWebcam = vi.fn().mockResolvedValue(null);
+		await expect(
+			recoveredWebcam(
+				{ webcamPath: "/rec/recording-1-webcam.mp4", webcamTimeOffsetMs: 29 },
+				stopBrowserWebcam,
+			),
+		).resolves.toEqual({ path: "/rec/recording-1-webcam.mp4", timeOffsetMs: 29 });
+		expect(stopBrowserWebcam).not.toHaveBeenCalled();
+	});
+
+	it("falls back to the browser webcam recorder", async () => {
+		await expect(
+			recoveredWebcam({}, vi.fn().mockResolvedValue("/rec/recording-1-webcam.webm")),
+		).resolves.toEqual({ path: "/rec/recording-1-webcam.webm", timeOffsetMs: null });
 	});
 });
 

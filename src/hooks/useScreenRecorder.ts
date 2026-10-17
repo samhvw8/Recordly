@@ -274,6 +274,21 @@ export type DiscardNativeCaptureResult = {
 	error?: unknown;
 };
 
+/**
+ * The webcam file for a recovered native recording: the one the capture helper finished, with
+ * its offset, or else whatever the browser webcam recorder holds (`timeOffsetMs` null keeps the
+ * offset measured at start).
+ */
+export async function recoveredWebcam(
+	result: { webcamPath?: string; webcamTimeOffsetMs?: number },
+	stopBrowserWebcam: () => Promise<string | null>,
+): Promise<{ path: string | null; timeOffsetMs: number | null }> {
+	if (result.webcamPath) {
+		return { path: result.webcamPath, timeOffsetMs: result.webcamTimeOffsetMs ?? 0 };
+	}
+	return { path: await stopBrowserWebcam(), timeOffsetMs: null };
+}
+
 export async function stopAndDiscardNativeCapture({
 	stopNativeScreenRecording,
 	deleteRecordingFile,
@@ -975,9 +990,10 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
 			const resolvedMicFallbackBlobPromise =
 				micFallbackBlobPromise ?? stopMicFallbackRecorder();
-			const webcamPath = await stopWebcamRecorder();
+			const webcam = await recoveredWebcam(result, stopWebcamRecorder);
+			if (webcam.timeOffsetMs !== null) webcamTimeOffsetMs.current = webcam.timeOffsetMs;
 			await storeMicrophoneSidecar(resolvedMicFallbackBlobPromise, result.path, startDelayMs);
-			await finalizeRecordingSession(result.path, webcamPath);
+			await finalizeRecordingSession(result.path, webcam.path);
 
 			if (typeof window.electronAPI?.hudOverlayClose === "function") {
 				window.electronAPI.hudOverlayClose();

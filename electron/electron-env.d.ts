@@ -300,6 +300,9 @@ interface Window {
 			path?: string;
 			message?: string;
 			error?: string;
+			/** Set when the capture helper recorded the webcam. */
+			webcamPath?: string;
+			webcamTimeOffsetMs?: number;
 		}>;
 		getLastNativeCaptureDiagnostics: () => Promise<{
 			success: boolean;

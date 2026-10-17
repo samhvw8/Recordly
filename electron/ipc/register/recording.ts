@@ -76,7 +76,7 @@ import {
 	waitForNativeCaptureStart,
 	waitForNativeCaptureStop,
 } from "../recording/mac";
-import { parseNativeWebcamOutput } from "../recording/nativeWebcam";
+import { parseNativeWebcamOutput, withNativeWebcam } from "../recording/nativeWebcam";
 import { resolveRecordedVideoStoragePath } from "../recording/storagePath";
 import {
 	attachWindowsCaptureLifecycle,
@@ -1241,15 +1241,10 @@ export function registerRecordingHandlers(
 					console.log("[stop-native] No separate audio tracks to mux");
 				}
 
-				const webcam = parseNativeWebcamOutput(nativeCaptureOutputBuffer);
-				const stored = await finalizeStoredVideo(finalVideoPath);
-				return webcam.webcamPath
-					? {
-							...stored,
-							webcamPath: webcam.webcamPath,
-							webcamTimeOffsetMs: webcam.timeOffsetMs,
-						}
-					: stored;
+				return withNativeWebcam(
+					await finalizeStoredVideo(finalVideoPath),
+					nativeCaptureOutputBuffer,
+				);
 			} catch (error) {
 				console.error("Failed to stop native ScreenCaptureKit recording:", error);
 				const fallbackPath = nativeCaptureTargetPath;
@@ -1306,7 +1301,10 @@ export function registerRecordingHandlers(
 								);
 							}
 						}
-						return await finalizeStoredVideo(fallbackPath);
+						return withNativeWebcam(
+							await finalizeStoredVideo(fallbackPath),
+							nativeCaptureOutputBuffer,
+						);
 					} catch {
 						// File doesn't exist or isn't accessible
 					}

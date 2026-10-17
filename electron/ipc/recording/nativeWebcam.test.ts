@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseNativeWebcamOutput } from "./nativeWebcam";
+import { parseNativeWebcamOutput, withNativeWebcam } from "./nativeWebcam";
 
 describe("parseNativeWebcamOutput", () => {
 	it("reads a started capture and its finished file", () => {
@@ -54,5 +54,27 @@ describe("parseNativeWebcamOutput", () => {
 			webcamPath: null,
 			timeOffsetMs: 0,
 		});
+	});
+});
+
+describe("withNativeWebcam", () => {
+	const written =
+		"WEBCAM_CAPTURE_STARTED FaceTime HD Camera\nWEBCAM_OUTPUT /rec/recording-1-webcam.mp4 OFFSET_MS 29\n";
+
+	it("attaches the finished webcam file to a stop or recovery result", () => {
+		expect(withNativeWebcam({ success: true, path: "/rec/recording-1.mp4" }, written)).toEqual({
+			success: true,
+			path: "/rec/recording-1.mp4",
+			webcamPath: "/rec/recording-1-webcam.mp4",
+			webcamTimeOffsetMs: 29,
+		});
+	});
+
+	it("leaves the result alone when the helper wrote no webcam file", () => {
+		const stored = { success: true, path: "/rec/recording-1.mp4" };
+		expect(withNativeWebcam(stored, "WEBCAM_CAPTURE_STARTED FaceTime HD Camera\n")).toBe(
+			stored,
+		);
+		expect(withNativeWebcam(stored, "")).toBe(stored);
 	});
 });
