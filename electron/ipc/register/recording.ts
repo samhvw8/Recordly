@@ -54,6 +54,7 @@ import {
 import {
 	getCompanionAudioFallbackInfo,
 	getFileSizeIfPresent,
+	getRecordingDiagnosticsPath,
 	type MicrophoneChunkTimingEvent,
 	type MicrophonePauseInterval,
 	type RecordingDiagnosticsSnapshot,
@@ -471,6 +472,7 @@ export function registerRecordingHandlers(
 			),
 		deleteFile: (filePath) => fs.rm(filePath, { force: true }),
 		telemetryPathFor: getTelemetryPathForVideo,
+		diagnosticsPathFor: getRecordingDiagnosticsPath,
 		setRecordingState,
 		reportRecovered: reportRecordingRecoveredAfterHudCrash,
 	});

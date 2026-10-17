@@ -220,6 +220,8 @@ describe("createHudCrashRecoveryDeps", () => {
 			),
 			deleteFile: vi.fn(async () => {}),
 			telemetryPathFor: (videoPath: string) => `${videoPath}.cursor.json`,
+			diagnosticsPathFor: (videoPath: string) =>
+				videoPath.replace(/\.mp4$/, ".recording-diagnostics.json"),
 			setRecordingState: vi.fn(),
 			reportRecovered: vi.fn(async () => {}),
 		};
@@ -260,10 +262,14 @@ describe("createHudCrashRecoveryDeps", () => {
 
 		crash();
 
-		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(8));
+		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(9));
 		expect(io.clearWindowsPendingVideo).toHaveBeenCalled();
 		expect(io.deleteFile).toHaveBeenNthCalledWith(1, "C:/rec/recording-1.mp4");
 		expect(io.deleteFile).toHaveBeenNthCalledWith(2, "C:/rec/recording-1.mp4.cursor.json");
+		expect(io.deleteFile).toHaveBeenNthCalledWith(
+			3,
+			"C:/rec/recording-1.recording-diagnostics.json",
+		);
 		expect(io.muxNativeWindowsRecording).not.toHaveBeenCalled();
 		expect(io.reportRecovered).not.toHaveBeenCalled();
 	});
@@ -308,7 +314,7 @@ describe("createHudCrashRecoveryDeps", () => {
 
 		crash();
 
-		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(8));
+		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(9));
 		expect(io.deleteFile).toHaveBeenNthCalledWith(1, "C:/rec/recording-1.mp4");
 		expect(io.clearWindowsPendingVideo).toHaveBeenCalled();
 		expect(io.muxNativeWindowsRecording).not.toHaveBeenCalled();
@@ -323,7 +329,7 @@ describe("createHudCrashRecoveryDeps", () => {
 
 		crash();
 
-		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(8));
+		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(9));
 		expect(io.deleteFile).toHaveBeenNthCalledWith(1, "/rec/recording-1.mp4");
 		expect(io.deleteFile).toHaveBeenCalledWith("/rec/recording-1.system.m4a");
 		expect(io.clearStoppedCountdownPath).toHaveBeenCalled();

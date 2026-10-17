@@ -160,6 +160,8 @@ export function createHudCrashRecoveryDeps(io: {
 	fileExists: (filePath: string) => Promise<boolean>;
 	deleteFile: (filePath: string) => Promise<void>;
 	telemetryPathFor: (videoPath: string) => string;
+	/** The capture diagnostics file written next to the video (Windows). */
+	diagnosticsPathFor: (videoPath: string) => string;
 	setRecordingState: (recording: boolean) => void;
 	reportRecovered: (result: StopResult, reason: string) => Promise<void>;
 }): HudCrashRecoveryDeps {
@@ -189,6 +191,7 @@ export function createHudCrashRecoveryDeps(io: {
 			for (const filePath of [
 				videoPath,
 				io.telemetryPathFor(videoPath),
+				io.diagnosticsPathFor(videoPath),
 				...nativeAudioSidecarPaths(videoPath),
 			]) {
 				await io.deleteFile(filePath);
