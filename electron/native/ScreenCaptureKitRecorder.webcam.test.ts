@@ -96,3 +96,57 @@ print(String(data: try! JSONSerialization.data(withJSONObject: report), encoding
 		expect(report.keyFrames).toBe(60);
 	});
 });
+
+// The renderer passes Chromium's label, which adds " (<vendor>:<product>)" to the camera's
+// macOS name whenever the camera has a model ID (VideoCaptureDeviceDescriptor::GetNameAndModel).
+describe.skipIf(process.platform !== "darwin")("native webcam camera matching", () => {
+	let results: Record<string, boolean>;
+	beforeAll(() => {
+		const directory = mkdtempSync(join(tmpdir(), "recordly-webcam-match-"));
+		const source = readFileSync(
+			new URL("./ScreenCaptureKitRecorder.swift", import.meta.url),
+			"utf8",
+		);
+		const webcamRecorder = source.slice(
+			source.indexOf("/// Records the camera next to the screen capture"),
+			source.indexOf("final class ScreenCaptureRecorder"),
+		);
+		const cases: [string, string, string][] = [
+			["plain", "FaceTime HD Camera", "FaceTime HD Camera"],
+			["chromium-suffix", "FaceTime HD Camera", "FaceTime HD Camera (05ac:8514)"],
+			["usb-suffix", "Logitech BRIO", "Logitech BRIO (046d:085e)"],
+			["other-camera", "FaceTime HD Camera", "Logitech BRIO (046d:085e)"],
+			["prefix-only", "iPhone Camera", "iPhone Camera Desk View (05ac:1234)"],
+			["not-a-model-id", "Studio Display Camera", "Studio Display Camera (Built-in)"],
+		];
+		writeFileSync(
+			join(directory, "main.swift"),
+			`import AVFoundation
+${webcamRecorder}
+var out: [String: Bool] = [:]
+${cases.map(([key, name, label]) => `out[${JSON.stringify(key)}] = WebcamRecorder.labelMatches(name: ${JSON.stringify(name)}, label: ${JSON.stringify(label)})`).join("\n")}
+print(String(data: try! JSONSerialization.data(withJSONObject: out), encoding: .utf8)!)
+`,
+		);
+		const built = spawnSync(
+			"swiftc",
+			["-o", join(directory, "match"), join(directory, "main.swift")],
+			{ encoding: "utf8" },
+		);
+		if (built.status !== 0) throw new Error(built.stderr);
+		results = JSON.parse(spawnSync(join(directory, "match"), [], { encoding: "utf8" }).stdout);
+		rmSync(directory, { recursive: true, force: true });
+	}, 180_000);
+
+	it("matches the macOS name with or without Chromium's model suffix", () => {
+		expect(results.plain).toBe(true);
+		expect(results["chromium-suffix"]).toBe(true);
+		expect(results["usb-suffix"]).toBe(true);
+	});
+
+	it("does not match another camera or a different name", () => {
+		expect(results["other-camera"]).toBe(false);
+		expect(results["prefix-only"]).toBe(false);
+		expect(results["not-a-model-id"]).toBe(false);
+	});
+});

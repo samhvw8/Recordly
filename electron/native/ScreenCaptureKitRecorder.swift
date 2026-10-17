@@ -76,15 +76,27 @@ final class WebcamRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 
 	/// The camera chosen in the app (matched by label, then by unique ID), or the default
 	/// camera when none was chosen. Nil when the chosen camera isn't connected.
+	/// True when Chromium's `label` names the camera called `name` on macOS. Chromium adds
+	/// " (<vendor>:<product>)" to the name whenever the camera has a model ID
+	/// (VideoCaptureDeviceDescriptor::GetNameAndModel), e.g. "FaceTime HD Camera (05ac:8514)".
+	static func labelMatches(name: String, label: String) -> Bool {
+		if label == name { return true }
+		guard label.hasPrefix(name + " (") else { return false }
+		let suffix = label.dropFirst(name.count)
+		return suffix.range(of: #"^ \([0-9A-Fa-f]{4}:[0-9A-Fa-f]{4}\)$"#, options: .regularExpression) != nil
+	}
+
 	static func resolveDevice(label: String?, uniqueID: String?) -> AVCaptureDevice? {
 		let devices = AVCaptureDevice.DiscoverySession(
-			deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
+			deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera, .deskViewCamera],
 			mediaType: .video,
 			position: .unspecified
 		).devices
 		let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 		let trimmedID = uniqueID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		if !trimmedLabel.isEmpty, let match = devices.first(where: { $0.localizedName == trimmedLabel }) {
+		if !trimmedLabel.isEmpty,
+			let match = devices.first(where: { labelMatches(name: $0.localizedName, label: trimmedLabel) })
+		{
 			return match
 		}
 		if !trimmedID.isEmpty, let match = devices.first(where: { $0.uniqueID == trimmedID }) {
