@@ -21,6 +21,7 @@ import {
 import { RECORDINGS_DIR } from "./appPaths";
 import { createAuthCallbackController } from "./authCallback";
 import {
+	createCommandMailbox,
 	createRecordingCommandController,
 	parseRecordingCommandUrl,
 	type RecordingCommandMessage,
@@ -211,23 +212,33 @@ const recordingCommands = createRecordingCommandController({
 	send: (message) => sendRecordingCommandToHud(message),
 });
 
+const hudCommands = createCommandMailbox<RecordingCommandMessage>();
+
 function sendRecordingCommandToHud(message: RecordingCommandMessage) {
-	// The recording controls live in the HUD; `mainWindow` can be the editor instead.
-	const hud = getHudOverlayWindow();
-	if (hud) {
-		if (message.confirm) {
-			hud.show();
-		}
-		hud.webContents.send("recording-command", message);
-		return;
+	// The recording controls live in the HUD; `mainWindow` can be the editor instead. With no
+	// HUD yet (only the editor is open, or nothing is), open it as the editor's "show recording
+	// HUD" does. The command waits in `hudCommands` until the HUD page has subscribed.
+	const hud = getHudOverlayWindow() ?? createHudOverlayWindow();
+	if (message.confirm) {
+		hud.show();
 	}
-	// No HUD yet (only the editor is open, or nothing is): open it as the editor's
-	// "show recording HUD" does, then deliver the command once it has loaded.
-	const created = createHudOverlayWindow();
-	created.webContents.once("did-finish-load", () =>
-		created.webContents.send("recording-command", message),
-	);
+	if (hudCommands.post(hud.webContents.id, message)) {
+		hud.webContents.send("recording-command", message);
+	}
 }
+
+ipcMain.on("recording-commands-ready", (event) => {
+	const hud = getHudOverlayWindow();
+	if (!hud || event.sender !== hud.webContents) return;
+	const contents = event.sender;
+	const id = contents.id;
+	const forget = () => hudCommands.gone(id);
+	contents.once("did-start-loading", forget);
+	contents.once("destroyed", forget);
+	for (const message of hudCommands.ready(id)) {
+		contents.send("recording-command", message);
+	}
+});
 
 function closeEditorWindowBypassingUnsavedPrompt(window: BrowserWindow | null) {
 	if (!window || window.isDestroyed()) {

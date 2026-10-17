@@ -68,3 +68,32 @@ export function createRecordingCommandController({
 
 	return { find, dispatch };
 }
+
+/**
+ * Holds commands until the HUD page has subscribed to them. A link can arrive while the HUD is
+ * still loading (at launch, or when the link itself opened the HUD) or reloading, and a message
+ * sent then is lost. The page reports `ready` when it subscribes; `gone` when it unloads.
+ */
+export function createCommandMailbox<T>(limit = 8) {
+	let readyId: number | null = null;
+	let kept: T[] = [];
+	return {
+		/** True when `message` can be sent to page `targetId` now; otherwise it is kept. */
+		post(targetId: number, message: T): boolean {
+			if (targetId === readyId) return true;
+			kept = [...kept, message].slice(-limit);
+			return false;
+		},
+		/** Page `id` has subscribed: returns the kept commands, oldest first, for it to receive. */
+		ready(id: number): T[] {
+			readyId = id;
+			const delivered = kept;
+			kept = [];
+			return delivered;
+		},
+		/** Page `id` unloaded (reload, crash, close): keep commands until a page subscribes again. */
+		gone(id: number) {
+			if (readyId === id) readyId = null;
+		},
+	};
+}

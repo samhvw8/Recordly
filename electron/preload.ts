@@ -663,6 +663,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			},
 		) => callback(message);
 		ipcRenderer.on("recording-command", listener);
+		// Main holds link commands until the HUD has subscribed (it may still be loading).
+		ipcRenderer.send("recording-commands-ready");
 		return () => ipcRenderer.removeListener("recording-command", listener);
 	},
 	onStopRecordingFromTray: (callback: () => void) => {

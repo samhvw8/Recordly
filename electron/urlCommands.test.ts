@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+	createCommandMailbox,
 	createRecordingCommandController,
 	parseRecordingCommandUrl,
 	startsRecording,
@@ -96,5 +97,37 @@ describe("createRecordingCommandController", () => {
 			controller.find(["/Applications/Recordly.app", "--flag", "recordly://record/pause"]),
 		).toBe("recordly://record/pause");
 		expect(controller.find(["/Applications/Recordly.app"])).toBeNull();
+	});
+});
+
+describe("createCommandMailbox", () => {
+	it("keeps commands until the page subscribes, then hands them over in order", () => {
+		const mailbox = createCommandMailbox<string>();
+		expect(mailbox.post(7, "start")).toBe(false);
+		expect(mailbox.post(7, "pause")).toBe(false);
+		expect(mailbox.ready(7)).toEqual(["start", "pause"]);
+		expect(mailbox.ready(7)).toEqual([]);
+	});
+
+	it("sends at once to the page that has subscribed", () => {
+		const mailbox = createCommandMailbox<string>();
+		mailbox.ready(7);
+		expect(mailbox.post(7, "stop")).toBe(true);
+		expect(mailbox.ready(7)).toEqual([]);
+	});
+
+	it("keeps commands for a new or reloading page until it subscribes again", () => {
+		const mailbox = createCommandMailbox<string>();
+		mailbox.ready(7);
+		expect(mailbox.post(8, "start")).toBe(false);
+		mailbox.gone(7);
+		expect(mailbox.post(7, "stop")).toBe(false);
+		expect(mailbox.ready(7)).toEqual(["start", "stop"]);
+	});
+
+	it("keeps only the most recent commands", () => {
+		const mailbox = createCommandMailbox<number>(3);
+		for (let i = 1; i <= 5; i++) mailbox.post(1, i);
+		expect(mailbox.ready(1)).toEqual([3, 4, 5]);
 	});
 });
