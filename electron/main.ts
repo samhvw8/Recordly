@@ -209,6 +209,9 @@ const recordingCommands = createRecordingCommandController({
 	protocol: authCallbacks.protocol,
 	isRecording: () => hudRecordingActive,
 	confirmStart: async () => {
+		// A link usually arrives while another app is in front; without this the question
+		// opens behind it and the user never sees it.
+		app.focus(process.platform === "darwin" ? { steal: true } : undefined);
 		const { response } = await dialog.showMessageBox({
 			type: "question",
 			title: "Start Recording",
