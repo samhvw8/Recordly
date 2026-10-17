@@ -441,16 +441,18 @@ export function registerRecordingHandlers(
 ) {
 	// True after set-recording-state(true): a recording the user sees, not a countdown.
 	let userRecordingActive = false;
+	let lastStopEndedUserRecording = false;
 	// Every start-native-screen-recording call still running, so recovery can wait for them.
 	const starts = createStartTracker();
 	const trackStart = starts.track;
 	const hudCrashRecoveryDeps = createHudCrashRecoveryDeps({
 		captureState: () => ({
-			macActive: nativeScreenRecordingActive,
-			macStopRequested: nativeCaptureStopRequested,
+			nativeActive: nativeScreenRecordingActive,
+			nativeStopRequested: nativeCaptureStopRequested,
 			windowsActive: windowsNativeCaptureActive,
 			windowsStopRequested: windowsCaptureStopRequested,
 			userRecording: userRecordingActive,
+			lastStopEndedUserRecording,
 		}),
 		startSettled: starts.settled,
 		stopNativeScreenRecording,
@@ -1022,6 +1024,9 @@ export function registerRecordingHandlers(
 	);
 
 	async function stopNativeScreenRecording() {
+		// The renderer leaves the recording state only after this stop, so this tells a
+		// recording from a countdown capture if its HUD dies before the Windows mux.
+		lastStopEndedUserRecording = userRecordingActive;
 		const start = Date.now();
 		console.log("[PERF:MAIN] Handler: stop-native-screen-recording: STARTED");
 		try {

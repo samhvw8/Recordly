@@ -25,10 +25,11 @@ export type HudCrashRecoveryDeps = {
 	/** Deletes a capture the user never started (warm start, countdown). */
 	discardRecording: (path: string) => Promise<void>;
 	/**
-	 * Windows only: a stopped capture whose file still waits for the renderer's mux.
-	 * Resolves to null when there is none or its file is already gone.
+	 * Windows only: a stopped capture whose file still waits for the renderer's mux, and
+	 * whether that Stop ended a recording (rather than a countdown). Resolves to null when
+	 * there is none or its file is already gone.
 	 */
-	takePendingStoppedVideo: () => Promise<string | null>;
+	takePendingStoppedVideo: () => Promise<{ path: string; userRecording: boolean } | null>;
 	/** Runs the Windows mux for the pending stopped video. */
 	muxPendingStoppedVideo: () => Promise<StopResult>;
 	setRecordingState: (recording: boolean) => void;
@@ -71,10 +72,12 @@ async function recover(deps: HudCrashRecoveryDeps, reason: string) {
 	await deps.startSettled();
 	if (!deps.isRecordingWithoutStopRequest()) {
 		// On Windows the renderer muxes the audio after its Stop went through. If it died in
-		// between, the stopped file is still waiting. The renderer has already left the
-		// recording state by then, so this can't tell a recording from a countdown; it keeps
-		// whatever file is there rather than risk deleting a real recording.
-		if (await deps.takePendingStoppedVideo()) {
+		// between, the stopped file is still waiting: mux it when the Stop ended a recording,
+		// delete it when the Stop ended a countdown (the renderer would have deleted it next).
+		const pending = await deps.takePendingStoppedVideo();
+		if (pending && !pending.userRecording) {
+			await deps.discardRecording(pending.path);
+		} else if (pending) {
 			console.error(
 				`[hud-crash-recovery] HUD renderer gone (${reason}) before its mux; muxing the stopped recording`,
 			);
@@ -120,11 +123,15 @@ async function recover(deps: HudCrashRecoveryDeps, reason: string) {
 
 /** What main knows about the native capture, read at the moment recovery needs it. */
 export type NativeCaptureState = {
-	macActive: boolean;
-	macStopRequested: boolean;
+	/** nativeScreenRecordingActive: set by the macOS start and also by the Windows start. */
+	nativeActive: boolean;
+	/** Set by the macOS stop only. */
+	nativeStopRequested: boolean;
 	windowsActive: boolean;
 	windowsStopRequested: boolean;
 	userRecording: boolean;
+	/** Whether the last stop-native-screen-recording ended a recording, not a countdown. */
+	lastStopEndedUserRecording: boolean;
 };
 
 /**
@@ -150,10 +157,12 @@ export function createHudCrashRecoveryDeps(io: {
 		startSettled: io.startSettled,
 		isRecordingWithoutStopRequest: () => {
 			const state = io.captureState();
-			return (
-				(state.macActive && !state.macStopRequested) ||
-				(state.windowsActive && !state.windowsStopRequested)
-			);
+			// A Windows capture also sets nativeActive, but only its own stop flag, so judge
+			// it by the Windows flags alone.
+			if (state.windowsActive) {
+				return !state.windowsStopRequested;
+			}
+			return state.nativeActive && !state.nativeStopRequested;
 		},
 		isUserRecording: () => io.captureState().userRecording,
 		stopRecording: () => {
@@ -174,7 +183,10 @@ export function createHudCrashRecoveryDeps(io: {
 				return null;
 			}
 			if (await io.fileExists(pending)) {
-				return pending;
+				return {
+					path: pending,
+					userRecording: io.captureState().lastStopEndedUserRecording,
+				};
 			}
 			// The renderer already deleted it (a cancelled countdown): forget the stale path.
 			io.clearWindowsPendingVideo();

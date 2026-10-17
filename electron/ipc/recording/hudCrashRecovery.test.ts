@@ -178,11 +178,12 @@ describe("createHudCrashRecoveryDeps", () => {
 		state: Partial<NativeCaptureState> & { pendingPath?: string; pendingFileExists?: boolean },
 	) {
 		const capture: NativeCaptureState = {
-			macActive: false,
-			macStopRequested: false,
+			nativeActive: false,
+			nativeStopRequested: false,
 			windowsActive: false,
 			windowsStopRequested: false,
 			userRecording: true,
+			lastStopEndedUserRecording: true,
 			...state,
 		};
 		const io = {
@@ -190,7 +191,7 @@ describe("createHudCrashRecoveryDeps", () => {
 			startSettled: vi.fn(async () => {}),
 			stopNativeScreenRecording: vi.fn(async () => {
 				// The real stop clears the active flags before it returns.
-				capture.macActive = false;
+				capture.nativeActive = false;
 				capture.windowsActive = false;
 				return { success: true, path: "C:/rec/recording-1.mp4" };
 			}),
@@ -213,7 +214,7 @@ describe("createHudCrashRecoveryDeps", () => {
 	}
 
 	it("muxes the audio on Windows, as the renderer would after a stop", async () => {
-		const { io, crash } = platform({ windowsActive: true });
+		const { io, crash } = platform({ nativeActive: true, windowsActive: true });
 
 		crash();
 
@@ -227,7 +228,7 @@ describe("createHudCrashRecoveryDeps", () => {
 	});
 
 	it("does not mux on macOS", async () => {
-		const { io, crash } = platform({ macActive: true });
+		const { io, crash } = platform({ nativeActive: true });
 
 		crash();
 
@@ -236,7 +237,11 @@ describe("createHudCrashRecoveryDeps", () => {
 	});
 
 	it("deletes a Windows countdown capture and its telemetry, without a mux", async () => {
-		const { io, crash } = platform({ windowsActive: true, userRecording: false });
+		const { io, crash } = platform({
+			nativeActive: true,
+			windowsActive: true,
+			userRecording: false,
+		});
 
 		crash();
 
@@ -248,8 +253,12 @@ describe("createHudCrashRecoveryDeps", () => {
 		expect(io.reportRecovered).not.toHaveBeenCalled();
 	});
 
-	it("leaves a Windows capture alone once its stop was requested", async () => {
-		const { io, crash } = platform({ windowsActive: true, windowsStopRequested: true });
+	it("leaves a Windows capture alone once its stop was requested, though it sets nativeActive too", async () => {
+		const { io, crash } = platform({
+			nativeActive: true,
+			windowsActive: true,
+			windowsStopRequested: true,
+		});
 
 		crash();
 
@@ -262,6 +271,7 @@ describe("createHudCrashRecoveryDeps", () => {
 		// After its Stop the renderer has already left the recording state.
 		const { io, crash } = platform({
 			userRecording: false,
+			lastStopEndedUserRecording: true,
 			pendingPath: "C:/rec/recording-1.mp4",
 		});
 
@@ -272,6 +282,22 @@ describe("createHudCrashRecoveryDeps", () => {
 		expect(io.muxNativeWindowsRecording).toHaveBeenCalledTimes(1);
 		expect(io.deleteFile).not.toHaveBeenCalled();
 		expect(io.setRecordingState).toHaveBeenCalledWith(false);
+	});
+
+	it("deletes a stopped Windows countdown capture whose renderer died before deleting it", async () => {
+		const { io, crash } = platform({
+			userRecording: false,
+			lastStopEndedUserRecording: false,
+			pendingPath: "C:/rec/recording-1.mp4",
+		});
+
+		crash();
+
+		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(2));
+		expect(io.deleteFile).toHaveBeenNthCalledWith(1, "C:/rec/recording-1.mp4");
+		expect(io.clearWindowsPendingVideo).toHaveBeenCalled();
+		expect(io.muxNativeWindowsRecording).not.toHaveBeenCalled();
+		expect(io.reportRecovered).not.toHaveBeenCalled();
 	});
 
 	it("only forgets a pending Windows video the renderer already deleted", async () => {
