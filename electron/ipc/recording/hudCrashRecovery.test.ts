@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	createHudCrashRecoveryDeps,
 	createStartTracker,
-	nativeAudioSidecarPaths,
+	nativeCaptureSidecarPaths,
 	type HudCrashRecoveryDeps,
 	type NativeCaptureState,
 	stopRecordingWhenHudGoes,
@@ -262,7 +262,7 @@ describe("createHudCrashRecoveryDeps", () => {
 
 		crash();
 
-		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(9));
+		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(10));
 		expect(io.clearWindowsPendingVideo).toHaveBeenCalled();
 		expect(io.deleteFile).toHaveBeenNthCalledWith(1, "C:/rec/recording-1.mp4");
 		expect(io.deleteFile).toHaveBeenNthCalledWith(2, "C:/rec/recording-1.mp4.cursor.json");
@@ -314,7 +314,7 @@ describe("createHudCrashRecoveryDeps", () => {
 
 		crash();
 
-		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(9));
+		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(10));
 		expect(io.deleteFile).toHaveBeenNthCalledWith(1, "C:/rec/recording-1.mp4");
 		expect(io.clearWindowsPendingVideo).toHaveBeenCalled();
 		expect(io.muxNativeWindowsRecording).not.toHaveBeenCalled();
@@ -329,7 +329,7 @@ describe("createHudCrashRecoveryDeps", () => {
 
 		crash();
 
-		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(9));
+		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(10));
 		expect(io.deleteFile).toHaveBeenNthCalledWith(1, "/rec/recording-1.mp4");
 		expect(io.deleteFile).toHaveBeenCalledWith("/rec/recording-1.system.m4a");
 		expect(io.clearStoppedCountdownPath).toHaveBeenCalled();
@@ -401,19 +401,20 @@ describe("createStartTracker", () => {
 	});
 });
 
-describe("nativeAudioSidecarPaths", () => {
-	it("lists the macOS and Windows audio files of one capture, and nothing else", () => {
-		expect(nativeAudioSidecarPaths("/rec/recording-1.mp4")).toEqual([
+describe("nativeCaptureSidecarPaths", () => {
+	it("lists the audio and native webcam files of one capture, and nothing else", () => {
+		expect(nativeCaptureSidecarPaths("/rec/recording-1.mp4")).toEqual([
 			"/rec/recording-1.system.m4a",
 			"/rec/recording-1.mic.m4a",
 			"/rec/recording-1.system.wav",
 			"/rec/recording-1.mic.wav",
 			"/rec/recording-1.system.wav.json",
 			"/rec/recording-1.mic.wav.json",
+			"/rec/recording-1-webcam.mp4",
 		]);
 	});
 
 	it("returns nothing for a path that isn't an MP4", () => {
-		expect(nativeAudioSidecarPaths("/rec/recording-1.webm")).toEqual([]);
+		expect(nativeCaptureSidecarPaths("/rec/recording-1.webm")).toEqual([]);
 	});
 });

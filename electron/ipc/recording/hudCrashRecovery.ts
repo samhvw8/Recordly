@@ -192,7 +192,7 @@ export function createHudCrashRecoveryDeps(io: {
 				videoPath,
 				io.telemetryPathFor(videoPath),
 				io.diagnosticsPathFor(videoPath),
-				...nativeAudioSidecarPaths(videoPath),
+				...nativeCaptureSidecarPaths(videoPath),
 			]) {
 				await io.deleteFile(filePath);
 			}
@@ -242,11 +242,12 @@ export function createStartTracker() {
 }
 
 /**
- * The audio files a native capture writes next to `recording-<ts>.mp4`: `.system.m4a` and
- * `.mic.m4a` on macOS, `.system.wav` and `.mic.wav` (with `.json` metadata) on Windows.
- * Only names derived from the video's own base name, so nothing else can match.
+ * The files a native capture writes next to `recording-<ts>.mp4`: audio (`.system.m4a` and
+ * `.mic.m4a` on macOS, `.system.wav` and `.mic.wav` with `.json` metadata on Windows) and a
+ * natively recorded webcam (`-webcam.mp4`, macOS). Only names derived from the video's own
+ * base name, so nothing else can match; files that don't exist are skipped by the caller.
  */
-export function nativeAudioSidecarPaths(videoPath: string): string[] {
+export function nativeCaptureSidecarPaths(videoPath: string): string[] {
 	const base = videoPath.replace(/\.mp4$/i, "");
 	if (base === videoPath) {
 		return [];
@@ -258,5 +259,6 @@ export function nativeAudioSidecarPaths(videoPath: string): string[] {
 		".mic.wav",
 		".system.wav.json",
 		".mic.wav.json",
+		"-webcam.mp4",
 	].map((suffix) => `${base}${suffix}`);
 }
