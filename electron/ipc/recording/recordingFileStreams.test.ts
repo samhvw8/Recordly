@@ -3,7 +3,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type RecordingFileStreamOwner, RecordingFileStreams } from "./recordingFileStreams";
+import {
+	RecordingFileCloseError,
+	type RecordingFileStreamOwner,
+	RecordingFileStreams,
+} from "./recordingFileStreams";
 
 const OWNER = 1;
 const OTHER_OWNER = 2;
@@ -84,6 +88,22 @@ describe("RecordingFileStreams", () => {
 		await streams.append(otherStreamId, OTHER_OWNER, bytes(9));
 		await streams.close(otherStreamId, OTHER_OWNER);
 		expect([...(await fs.readFile(otherPath))]).toEqual([9]);
+	});
+
+	it("reports where the partial file is when the close fails", async () => {
+		const filePath = path.join(dir, "recording-1-webcam.mp4");
+		const streamId = await streams.open(filePath, OWNER);
+		await streams.append(streamId, OWNER, bytes(1, 2, 3));
+
+		const closing = streams.close(
+			streamId,
+			OWNER,
+			path.join(dir, "missing-folder", "recording-1-webcam.mp4"),
+		);
+
+		await expect(closing).rejects.toBeInstanceOf(RecordingFileCloseError);
+		await expect(closing).rejects.toMatchObject({ partialPath: filePath });
+		expect([...(await fs.readFile(filePath))]).toEqual([1, 2, 3]);
 	});
 
 	it("deletes the file when a stream is discarded", async () => {
@@ -167,6 +187,18 @@ describe("RecordingFileStreams", () => {
 			const filePath = path.join(dir, "recording-1-webcam.mp4");
 			const opening = streams.open(filePath, OWNER);
 			o.emit("render-process-gone", {}, { reason: "crashed" });
+
+			await expect(opening).rejects.toThrow("Recording renderer went away");
+			expect(await streams.closeAllForOwner(OWNER)).toEqual([]);
+		});
+
+		it("closes a file opened by a page that went away, even after a new page is watched", async () => {
+			const o = owner();
+			streams.closeWhenOwnerGoes(o, () => {});
+			const opening = streams.open(path.join(dir, "recording-1-webcam.mp4"), OWNER);
+			o.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+			// The new page starts recording before the old page's open finished.
+			streams.closeWhenOwnerGoes(o, () => {});
 
 			await expect(opening).rejects.toThrow("Recording renderer went away");
 			expect(await streams.closeAllForOwner(OWNER)).toEqual([]);

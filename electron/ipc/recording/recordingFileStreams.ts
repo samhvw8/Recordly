@@ -15,6 +15,17 @@ export type ClosedRecordingFileStream = {
 	bytesWritten: number;
 };
 
+/** A close that failed; the part written so far is still on disk at `partialPath`. */
+export class RecordingFileCloseError extends Error {
+	constructor(
+		message: string,
+		readonly partialPath: string,
+	) {
+		super(message);
+		this.name = "RecordingFileCloseError";
+	}
+}
+
 /** The parts of Electron's WebContents that closeWhenOwnerGoes uses. */
 export type RecordingFileStreamOwner = Pick<Electron.WebContents, "id" | "on" | "removeListener">;
 
@@ -26,7 +37,8 @@ export type RecordingFileStreamOwner = Pick<Electron.WebContents, "id" | "on" | 
  */
 export class RecordingFileStreams {
 	private readonly streams = new Map<string, RecordingFileStream>();
-	private readonly watchedOwners = new Set<number>();
+	/** One token per watch of an owner; a new token means the owner went away in between. */
+	private readonly ownerWatches = new Map<number, object>();
 	private nextStreamId = 1;
 
 	/**
@@ -38,13 +50,13 @@ export class RecordingFileStreams {
 		owner: RecordingFileStreamOwner,
 		onClosed: (closed: ClosedRecordingFileStream[]) => void,
 	) {
-		if (this.watchedOwners.has(owner.id)) {
+		if (this.ownerWatches.has(owner.id)) {
 			return;
 		}
-		this.watchedOwners.add(owner.id);
+		this.ownerWatches.set(owner.id, {});
 		const ownerId = owner.id;
 		const stopWatching = () => {
-			this.watchedOwners.delete(ownerId);
+			this.ownerWatches.delete(ownerId);
 			owner.removeListener("destroyed", onGone);
 			owner.removeListener("render-process-gone", onGone);
 			owner.removeListener("did-start-navigation", onNavigation);
@@ -66,10 +78,11 @@ export class RecordingFileStreams {
 	}
 
 	async open(filePath: string, ownerId: number): Promise<string> {
-		const watchedBeforeOpen = this.watchedOwners.has(ownerId);
+		const watch = this.ownerWatches.get(ownerId);
 		const handle = await fs.open(filePath, "w");
-		if (watchedBeforeOpen && !this.watchedOwners.has(ownerId)) {
-			// The owner went away while the file was opening; its streams were already closed.
+		if (watch && this.ownerWatches.get(ownerId) !== watch) {
+			// The owner went away while the file was opening (and may be watched again by a
+			// new page); its streams were already closed, so this one would be orphaned.
 			await handle.close();
 			throw new Error("Recording renderer went away");
 		}
@@ -135,12 +148,16 @@ export class RecordingFileStreams {
 		await this.closeHandle(stream);
 
 		if (stream.writeError) {
-			throw stream.writeError;
+			throw new RecordingFileCloseError(stream.writeError.message, stream.path);
 		}
 
 		let finalPath = stream.path;
 		if (targetPath && targetPath !== stream.path) {
-			await fs.rename(stream.path, targetPath);
+			try {
+				await fs.rename(stream.path, targetPath);
+			} catch (error) {
+				throw new RecordingFileCloseError(String(error), stream.path);
+			}
 			finalPath = targetPath;
 		}
 

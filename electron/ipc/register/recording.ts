@@ -76,7 +76,7 @@ import {
 	waitForNativeCaptureStart,
 	waitForNativeCaptureStop,
 } from "../recording/mac";
-import { RecordingFileStreams } from "../recording/recordingFileStreams";
+import { RecordingFileCloseError, RecordingFileStreams } from "../recording/recordingFileStreams";
 import { resolveRecordedVideoStoragePath } from "../recording/storagePath";
 import { writeWebmDuration } from "../recording/webmDuration";
 import {
@@ -165,6 +165,22 @@ import { bringSelectedWindowForward } from "./sources";
 const execFileAsync = promisify(execFile);
 
 const recordingFileStreams = new RecordingFileStreams();
+/**
+ * Post-processing for a streamed recording. It must never cost the recording: on any error,
+ * including a missing ffmpeg, the file is kept as written.
+ */
+async function finishStreamedRecording(filePath: string): Promise<string> {
+	if (!filePath.toLowerCase().endsWith(".webm")) {
+		return filePath;
+	}
+	try {
+		await writeWebmDuration(getFfmpegBinaryPath(), filePath);
+	} catch (error) {
+		console.warn("Failed to write WebM duration; keeping the recording as written:", error);
+	}
+	return filePath;
+}
+
 function closeRecordingFileStreamsWhenOwnerGoes(owner: Electron.WebContents) {
 	recordingFileStreams.closeWhenOwnerGoes(owner, (closed) => {
 		for (const stream of closed) {
@@ -1887,12 +1903,17 @@ export function registerRecordingHandlers(
 					event.sender.id,
 					targetPath,
 				);
-				if (closed.path.toLowerCase().endsWith(".webm")) {
-					await writeWebmDuration(getFfmpegBinaryPath(), closed.path);
-				}
-				return await finalizeStoredVideo(closed.path);
+				return await finalizeStoredVideo(await finishStreamedRecording(closed.path));
 			} catch (error) {
 				console.error("Failed to close recording file stream:", error);
+				if (error instanceof RecordingFileCloseError) {
+					return {
+						success: false,
+						path: error.partialPath,
+						message: `Part of the recording could not be saved. The part that was written is at ${error.partialPath}.`,
+						error: String(error),
+					};
+				}
 				return {
 					success: false,
 					message: "Failed to store video",

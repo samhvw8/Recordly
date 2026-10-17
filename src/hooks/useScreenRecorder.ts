@@ -1064,6 +1064,12 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 								"Error saving webcam recording:",
 								finished.result.message,
 							);
+							// The screen recording can still succeed, so only tell the user here.
+							toast.error(
+								finished.result.message ??
+									"The webcam recording could not be saved.",
+								{ duration: 10000 },
+							);
 						}
 						webcamStopResolver.current?.(
 							finished.result.success ? (finished.result.path ?? null) : null,
