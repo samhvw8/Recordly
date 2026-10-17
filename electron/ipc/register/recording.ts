@@ -442,6 +442,7 @@ export function registerRecordingHandlers(
 	// True after set-recording-state(true): a recording the user sees, not a countdown.
 	let userRecordingActive = false;
 	let lastStopEndedUserRecording = false;
+	let stoppedCountdownPath: string | null = null;
 	// Every start-native-screen-recording call still running, so recovery can wait for them.
 	const starts = createStartTracker();
 	const trackStart = starts.track;
@@ -459,6 +460,10 @@ export function registerRecordingHandlers(
 		muxNativeWindowsRecording: () => muxNativeWindowsRecording(),
 		clearWindowsPendingVideo: () => setWindowsPendingVideoPath(null),
 		windowsPendingVideoPath: () => windowsPendingVideoPath,
+		stoppedCountdownPath: () => stoppedCountdownPath,
+		clearStoppedCountdownPath: () => {
+			stoppedCountdownPath = null;
+		},
 		fileExists: (filePath) =>
 			fs.access(filePath).then(
 				() => true,
@@ -475,6 +480,7 @@ export function registerRecordingHandlers(
 		trackStart(async (event, source: SelectedSource, options?: NativeMacRecordingOptions) => {
 			// If this renderer dies mid-recording, nothing else can press Stop (#1139).
 			stopRecordingWhenHudGoes(event.sender, hudCrashRecoveryDeps);
+			stoppedCountdownPath = null;
 			// Protect the HUD at the capture boundary, before the renderer publishes recording state.
 			beginHudCaptureProtection();
 			const visibleWindowBounds = source.id?.startsWith("window:")
@@ -1374,7 +1380,15 @@ export function registerRecordingHandlers(
 			);
 		}
 	}
-	ipcMain.handle("stop-native-screen-recording", stopNativeScreenRecording);
+	ipcMain.handle("stop-native-screen-recording", async () => {
+		const stopped = await stopNativeScreenRecording();
+		// A countdown the renderer stopped is deleted by it next; remember it in case the
+		// renderer dies before that (HUD crash recovery discards it then).
+		if (stopped.success && "path" in stopped && stopped.path && !lastStopEndedUserRecording) {
+			stoppedCountdownPath = stopped.path;
+		}
+		return stopped;
+	});
 
 	ipcMain.handle("recover-native-screen-recording", async () => {
 		if (process.platform !== "darwin") {

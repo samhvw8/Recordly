@@ -30,6 +30,11 @@ export type HudCrashRecoveryDeps = {
 	 * there is none or its file is already gone.
 	 */
 	takePendingStoppedVideo: () => Promise<{ path: string; userRecording: boolean } | null>;
+	/**
+	 * A countdown capture the renderer stopped but may not have deleted yet. Resolves to
+	 * null when there is none or its file is already gone.
+	 */
+	takeStoppedCountdownCapture: () => Promise<string | null>;
 	/** Runs the Windows mux for the pending stopped video. */
 	muxPendingStoppedVideo: () => Promise<StopResult>;
 	setRecordingState: (recording: boolean) => void;
@@ -75,7 +80,11 @@ async function recover(deps: HudCrashRecoveryDeps, reason: string) {
 		// between, the stopped file is still waiting: mux it when the Stop ended a recording,
 		// delete it when the Stop ended a countdown (the renderer would have deleted it next).
 		const pending = await deps.takePendingStoppedVideo();
-		if (pending && !pending.userRecording) {
+		// A countdown the renderer stopped but hadn't deleted yet (any platform).
+		const stoppedCountdown = pending ? null : await deps.takeStoppedCountdownCapture();
+		if (stoppedCountdown) {
+			await deps.discardRecording(stoppedCountdown);
+		} else if (pending && !pending.userRecording) {
 			await deps.discardRecording(pending.path);
 		} else if (pending) {
 			console.error(
@@ -145,6 +154,9 @@ export function createHudCrashRecoveryDeps(io: {
 	muxNativeWindowsRecording: () => Promise<StopResult>;
 	clearWindowsPendingVideo: () => void;
 	windowsPendingVideoPath: () => string | null;
+	/** Video path of the last renderer stop that ended a countdown, until the next start. */
+	stoppedCountdownPath: () => string | null;
+	clearStoppedCountdownPath: () => void;
 	fileExists: (filePath: string) => Promise<boolean>;
 	deleteFile: (filePath: string) => Promise<void>;
 	telemetryPathFor: (videoPath: string) => string;
@@ -196,6 +208,11 @@ export function createHudCrashRecoveryDeps(io: {
 			// The renderer already deleted it (a cancelled countdown): forget the stale path.
 			io.clearWindowsPendingVideo();
 			return null;
+		},
+		takeStoppedCountdownCapture: async () => {
+			const stopped = io.stoppedCountdownPath();
+			io.clearStoppedCountdownPath();
+			return stopped && (await io.fileExists(stopped)) ? stopped : null;
 		},
 		muxPendingStoppedVideo: () => io.muxNativeWindowsRecording(),
 		setRecordingState: io.setRecordingState,

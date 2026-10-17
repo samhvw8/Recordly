@@ -18,7 +18,10 @@ function setup(overrides: Partial<HudCrashRecoveryDeps> = {}) {
 		stopRecording: vi.fn(async () => ({ success: true, path: "/rec/recording-1.mp4" })),
 		finishRecording: vi.fn(async (stopped) => stopped),
 		discardRecording: vi.fn(async () => {}),
-		takePendingStoppedVideo: vi.fn(async () => null as string | null),
+		takePendingStoppedVideo: vi.fn(
+			async () => null as { path: string; userRecording: boolean } | null,
+		),
+		takeStoppedCountdownCapture: vi.fn(async () => null as string | null),
 		muxPendingStoppedVideo: vi.fn(async () => ({
 			success: true,
 			path: "/rec/recording-1.mp4",
@@ -176,7 +179,12 @@ describe("stopRecordingWhenHudGoes", () => {
 
 describe("createHudCrashRecoveryDeps", () => {
 	function platform(
-		state: Partial<NativeCaptureState> & { pendingPath?: string; pendingFileExists?: boolean },
+		state: Partial<NativeCaptureState> & {
+			pendingPath?: string;
+			pendingFileExists?: boolean;
+			countdownPath?: string;
+			countdownFileExists?: boolean;
+		},
 	) {
 		const capture: NativeCaptureState = {
 			nativeActive: false,
@@ -203,7 +211,13 @@ describe("createHudCrashRecoveryDeps", () => {
 			})),
 			clearWindowsPendingVideo: vi.fn(),
 			windowsPendingVideoPath: vi.fn(() => state.pendingPath ?? null),
-			fileExists: vi.fn(async () => state.pendingFileExists ?? true),
+			stoppedCountdownPath: vi.fn(() => state.countdownPath ?? null),
+			clearStoppedCountdownPath: vi.fn(),
+			fileExists: vi.fn(async (filePath: string) =>
+				filePath === state.countdownPath
+					? (state.countdownFileExists ?? true)
+					: (state.pendingFileExists ?? true),
+			),
 			deleteFile: vi.fn(async () => {}),
 			telemetryPathFor: (videoPath: string) => `${videoPath}.cursor.json`,
 			setRecordingState: vi.fn(),
@@ -299,6 +313,36 @@ describe("createHudCrashRecoveryDeps", () => {
 		expect(io.clearWindowsPendingVideo).toHaveBeenCalled();
 		expect(io.muxNativeWindowsRecording).not.toHaveBeenCalled();
 		expect(io.reportRecovered).not.toHaveBeenCalled();
+	});
+
+	it("deletes a countdown capture the renderer stopped but hadn't deleted (macOS)", async () => {
+		const { io, crash } = platform({
+			userRecording: false,
+			countdownPath: "/rec/recording-1.mp4",
+		});
+
+		crash();
+
+		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(8));
+		expect(io.deleteFile).toHaveBeenNthCalledWith(1, "/rec/recording-1.mp4");
+		expect(io.deleteFile).toHaveBeenCalledWith("/rec/recording-1.system.m4a");
+		expect(io.clearStoppedCountdownPath).toHaveBeenCalled();
+		expect(io.stopNativeScreenRecording).not.toHaveBeenCalled();
+		expect(io.reportRecovered).not.toHaveBeenCalled();
+	});
+
+	it("only forgets a stopped countdown the renderer already deleted", async () => {
+		const { io, crash } = platform({
+			userRecording: false,
+			countdownPath: "/rec/recording-1.mp4",
+			countdownFileExists: false,
+		});
+
+		crash();
+
+		await vi.waitFor(() => expect(io.clearStoppedCountdownPath).toHaveBeenCalled());
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(io.deleteFile).not.toHaveBeenCalled();
 	});
 
 	it("only forgets a pending Windows video the renderer already deleted", async () => {
