@@ -308,28 +308,39 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
 		outputSettings[AVVideoWidthKey] = outputWidth
 		outputSettings[AVVideoHeightKey] = outputHeight
-		let videoCodec = preferredVideoCodec(width: outputWidth, height: outputHeight)
-		if videoCodec == .hevc {
-			outputSettings = hevcVideoSettings(from: outputSettings)
-		}
-		fputs("VIDEO_CODEC \(videoCodec.rawValue) \(outputWidth)x\(outputHeight)\n", stderr)
-		fflush(stderr)
 		outputSettings[AVVideoColorPropertiesKey] = [
 			AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
 			AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
 			AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
 		]
 
-		let videoInput = AVAssetWriterInput(
-			mediaType: .video,
-			outputSettings: outputSettings,
-			sourceFormatHint: sourceVideoFormat
-		)
-		videoInput.expectsMediaDataInRealTime = true
+		func makeVideoInput(_ settings: [String: Any]) -> AVAssetWriterInput {
+			let input = AVAssetWriterInput(
+				mediaType: .video,
+				outputSettings: settings,
+				sourceFormatHint: sourceVideoFormat
+			)
+			input.expectsMediaDataInRealTime = true
+			return input
+		}
 
-		guard let assetWriter = assetWriter, assetWriter.canAdd(videoInput) else {
+		guard let assetWriter = assetWriter else {
 			throw NSError(domain: "RecordlyCapture", code: 7, userInfo: [NSLocalizedDescriptionKey: "Unable to add video writer input"])
 		}
+		var videoCodec = preferredVideoCodec(width: outputWidth, height: outputHeight)
+		var videoInput = makeVideoInput(
+			videoCodec == .hevc ? hevcVideoSettings(from: outputSettings) : outputSettings
+		)
+		if videoCodec == .hevc && !assetWriter.canAdd(videoInput) {
+			// The writer refused HEVC: record H.264 as before rather than fail the recording.
+			videoCodec = .h264
+			videoInput = makeVideoInput(outputSettings)
+		}
+		guard assetWriter.canAdd(videoInput) else {
+			throw NSError(domain: "RecordlyCapture", code: 7, userInfo: [NSLocalizedDescriptionKey: "Unable to add video writer input"])
+		}
+		fputs("VIDEO_CODEC \(videoCodec.rawValue) \(outputWidth)x\(outputHeight)\n", stderr)
+		fflush(stderr)
 
 		assetWriter.add(videoInput)
 		self.videoInput = videoInput
