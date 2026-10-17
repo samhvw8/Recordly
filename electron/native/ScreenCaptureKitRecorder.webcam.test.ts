@@ -101,6 +101,7 @@ print(String(data: try! JSONSerialization.data(withJSONObject: report), encoding
 // macOS name whenever the camera has a model ID (VideoCaptureDeviceDescriptor::GetNameAndModel).
 describe.skipIf(process.platform !== "darwin")("native webcam camera matching", () => {
 	let results: Record<string, boolean>;
+	let picks: Record<string, number>;
 	beforeAll(() => {
 		const directory = mkdtempSync(join(tmpdir(), "recordly-webcam-match-"));
 		const source = readFileSync(
@@ -125,7 +126,13 @@ describe.skipIf(process.platform !== "darwin")("native webcam camera matching", 
 ${webcamRecorder}
 var out: [String: Bool] = [:]
 ${cases.map(([key, name, label]) => `out[${JSON.stringify(key)}] = WebcamRecorder.labelMatches(name: ${JSON.stringify(name)}, label: ${JSON.stringify(label)})`).join("\n")}
-print(String(data: try! JSONSerialization.data(withJSONObject: out), encoding: .utf8)!)
+func pick(_ names: [String], _ label: String) -> Int { WebcamRecorder.matchingCamera(names: names, label: label) ?? -1 }
+var picks: [String: Int] = [:]
+picks["one"] = pick(["FaceTime HD Camera", "Logitech BRIO"], "Logitech BRIO (046d:085e)")
+picks["two-same-name"] = pick(["Logitech BRIO", "Logitech BRIO"], "Logitech BRIO (046d:085e)")
+picks["none"] = pick(["FaceTime HD Camera"], "Logitech BRIO (046d:085e)")
+let both: [String: Any] = ["matches": out, "picks": picks]
+print(String(data: try! JSONSerialization.data(withJSONObject: both), encoding: .utf8)!)
 `,
 		);
 		const built = spawnSync(
@@ -134,7 +141,9 @@ print(String(data: try! JSONSerialization.data(withJSONObject: out), encoding: .
 			{ encoding: "utf8" },
 		);
 		if (built.status !== 0) throw new Error(built.stderr);
-		results = JSON.parse(spawnSync(join(directory, "match"), [], { encoding: "utf8" }).stdout);
+		({ matches: results, picks } = JSON.parse(
+			spawnSync(join(directory, "match"), [], { encoding: "utf8" }).stdout,
+		));
 		rmSync(directory, { recursive: true, force: true });
 	}, 180_000);
 
@@ -148,5 +157,11 @@ print(String(data: try! JSONSerialization.data(withJSONObject: out), encoding: .
 		expect(results["other-camera"]).toBe(false);
 		expect(results["prefix-only"]).toBe(false);
 		expect(results["not-a-model-id"]).toBe(false);
+	});
+
+	it("picks the one matching camera, and none when two cameras share the name", () => {
+		expect(picks.one).toBe(1);
+		expect(picks["two-same-name"]).toBe(-1);
+		expect(picks.none).toBe(-1);
 	});
 });

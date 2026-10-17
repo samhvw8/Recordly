@@ -86,6 +86,14 @@ final class WebcamRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 		return suffix.range(of: #"^ \([0-9A-Fa-f]{4}:[0-9A-Fa-f]{4}\)$"#, options: .regularExpression) != nil
 	}
 
+	/// The index of the one camera whose name matches `label`. Two cameras with the same name
+	/// (e.g. two of one model, which also share the model ID) are ambiguous: nil, so the app
+	/// records the webcam the old way, by Chromium's exact device ID, not the wrong camera.
+	static func matchingCamera(names: [String], label: String) -> Int? {
+		let matches = names.indices.filter { labelMatches(name: names[$0], label: label) }
+		return matches.count == 1 ? matches[0] : nil
+	}
+
 	static func resolveDevice(label: String?, uniqueID: String?) -> AVCaptureDevice? {
 		let devices = AVCaptureDevice.DiscoverySession(
 			deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera, .deskViewCamera],
@@ -94,10 +102,15 @@ final class WebcamRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 		).devices
 		let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 		let trimmedID = uniqueID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		if !trimmedLabel.isEmpty,
-			let match = devices.first(where: { labelMatches(name: $0.localizedName, label: trimmedLabel) })
-		{
-			return match
+		if !trimmedLabel.isEmpty {
+			let names = devices.map(\.localizedName)
+			if let index = matchingCamera(names: names, label: trimmedLabel) {
+				return devices[index]
+			}
+			// More than one camera matches: don't guess.
+			if names.contains(where: { labelMatches(name: $0, label: trimmedLabel) }) {
+				return nil
+			}
 		}
 		if !trimmedID.isEmpty, let match = devices.first(where: { $0.uniqueID == trimmedID }) {
 			return match
