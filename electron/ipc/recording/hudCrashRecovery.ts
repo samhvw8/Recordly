@@ -174,8 +174,13 @@ export function createHudCrashRecoveryDeps(io: {
 			stoppedWindowsCapture ? await io.muxNativeWindowsRecording() : stopped,
 		discardRecording: async (videoPath) => {
 			io.clearWindowsPendingVideo();
-			await io.deleteFile(videoPath);
-			await io.deleteFile(io.telemetryPathFor(videoPath));
+			for (const filePath of [
+				videoPath,
+				io.telemetryPathFor(videoPath),
+				...nativeAudioSidecarPaths(videoPath),
+			]) {
+				await io.deleteFile(filePath);
+			}
 		},
 		takePendingStoppedVideo: async () => {
 			const pending = io.windowsPendingVideoPath();
@@ -214,4 +219,24 @@ export function createStartTracker() {
 			},
 		settled: () => inFlight.then(() => undefined),
 	};
+}
+
+/**
+ * The audio files a native capture writes next to `recording-<ts>.mp4`: `.system.m4a` and
+ * `.mic.m4a` on macOS, `.system.wav` and `.mic.wav` (with `.json` metadata) on Windows.
+ * Only names derived from the video's own base name, so nothing else can match.
+ */
+export function nativeAudioSidecarPaths(videoPath: string): string[] {
+	const base = videoPath.replace(/\.mp4$/i, "");
+	if (base === videoPath) {
+		return [];
+	}
+	return [
+		".system.m4a",
+		".mic.m4a",
+		".system.wav",
+		".mic.wav",
+		".system.wav.json",
+		".mic.wav.json",
+	].map((suffix) => `${base}${suffix}`);
 }

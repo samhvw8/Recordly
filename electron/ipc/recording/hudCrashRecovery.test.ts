@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	createHudCrashRecoveryDeps,
 	createStartTracker,
+	nativeAudioSidecarPaths,
 	type HudCrashRecoveryDeps,
 	type NativeCaptureState,
 	stopRecordingWhenHudGoes,
@@ -245,7 +246,7 @@ describe("createHudCrashRecoveryDeps", () => {
 
 		crash();
 
-		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(2));
+		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(8));
 		expect(io.clearWindowsPendingVideo).toHaveBeenCalled();
 		expect(io.deleteFile).toHaveBeenNthCalledWith(1, "C:/rec/recording-1.mp4");
 		expect(io.deleteFile).toHaveBeenNthCalledWith(2, "C:/rec/recording-1.mp4.cursor.json");
@@ -293,7 +294,7 @@ describe("createHudCrashRecoveryDeps", () => {
 
 		crash();
 
-		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(2));
+		await vi.waitFor(() => expect(io.deleteFile).toHaveBeenCalledTimes(8));
 		expect(io.deleteFile).toHaveBeenNthCalledWith(1, "C:/rec/recording-1.mp4");
 		expect(io.clearWindowsPendingVideo).toHaveBeenCalled();
 		expect(io.muxNativeWindowsRecording).not.toHaveBeenCalled();
@@ -347,5 +348,22 @@ describe("createStartTracker", () => {
 			starts.track(async () => Promise.reject(new Error("no helper")))(),
 		).rejects.toThrow();
 		await expect(starts.settled()).resolves.toBeUndefined();
+	});
+});
+
+describe("nativeAudioSidecarPaths", () => {
+	it("lists the macOS and Windows audio files of one capture, and nothing else", () => {
+		expect(nativeAudioSidecarPaths("/rec/recording-1.mp4")).toEqual([
+			"/rec/recording-1.system.m4a",
+			"/rec/recording-1.mic.m4a",
+			"/rec/recording-1.system.wav",
+			"/rec/recording-1.mic.wav",
+			"/rec/recording-1.system.wav.json",
+			"/rec/recording-1.mic.wav.json",
+		]);
+	});
+
+	it("returns nothing for a path that isn't an MP4", () => {
+		expect(nativeAudioSidecarPaths("/rec/recording-1.webm")).toEqual([]);
 	});
 });
