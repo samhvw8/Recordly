@@ -649,6 +649,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	getSystemCursorAssets: () => {
 		return ipcRenderer.invoke("get-system-cursor-assets");
 	},
+	onRecordingCommand: (
+		callback: (command: "start" | "stop" | "pause" | "resume" | "toggle") => void,
+	) => {
+		const listener = (_: unknown, command: "start" | "stop" | "pause" | "resume" | "toggle") =>
+			callback(command);
+		ipcRenderer.on("recording-command", listener);
+		return () => ipcRenderer.removeListener("recording-command", listener);
+	},
 	onStopRecordingFromTray: (callback: () => void) => {
 		const listener = () => callback();
 		ipcRenderer.on("stop-recording-from-tray", listener);

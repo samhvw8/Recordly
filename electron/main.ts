@@ -20,6 +20,11 @@ import {
 } from "electron";
 import { RECORDINGS_DIR } from "./appPaths";
 import { createAuthCallbackController } from "./authCallback";
+import {
+	createRecordingCommandController,
+	parseRecordingCommandUrl,
+	type RecordingCommand,
+} from "./urlCommands";
 import { showCursor } from "./cursorHider";
 import { getGpuSwitches } from "./gpuSwitches";
 import {
@@ -197,6 +202,44 @@ const authCallbacks = createAuthCallbackController({
 	isDev: IS_DEV,
 	focusApp: () => focusOrCreateMainWindow(),
 });
+
+// Whether a recording runs, as last published by the recording controls (set-recording-state).
+let hudRecordingActive = false;
+const recordingCommands = createRecordingCommandController({
+	protocol: authCallbacks.protocol,
+	isRecording: () => hudRecordingActive,
+	confirmStart: async () => {
+		const { response } = await dialog.showMessageBox({
+			type: "question",
+			title: "Start Recording",
+			message: "Start recording your screen?",
+			detail: "A link or another app asked Recordly to start a recording.",
+			buttons: ["Start Recording", "Cancel"],
+			defaultId: 0,
+			cancelId: 1,
+		});
+		return response === 0;
+	},
+	send: (command) => sendRecordingCommandToHud(command),
+});
+
+function sendRecordingCommandToHud(command: RecordingCommand) {
+	// The recording controls live in the HUD; `mainWindow` can be the editor instead.
+	const hud = getHudOverlayWindow();
+	if (hud) {
+		if (command === "start" || command === "toggle") {
+			hud.show();
+		}
+		hud.webContents.send("recording-command", command);
+		return;
+	}
+	// No HUD yet (only the editor is open, or nothing is): open it as the editor's
+	// "show recording HUD" does, then deliver the command once it has loaded.
+	const created = createHudOverlayWindow();
+	created.webContents.once("did-finish-load", () =>
+		created.webContents.send("recording-command", command),
+	);
+}
 
 function closeEditorWindowBypassingUnsavedPrompt(window: BrowserWindow | null) {
 	if (!window || window.isDestroyed()) {
@@ -902,7 +945,20 @@ app.on("activate", () => {
 app.on("second-instance", (_event, commandLine) => {
 	const authCallback = authCallbacks.find(commandLine);
 	if (authCallback) authCallbacks.dispatch(authCallback);
+	const recordingCommand = recordingCommands.find(commandLine);
+	if (recordingCommand) {
+		void recordingCommands.dispatch(recordingCommand);
+		return;
+	}
 	focusOrCreateMainWindow();
+});
+
+// macOS delivers recordly:// links here (auth links have their own listener).
+app.on("open-url", (event, url) => {
+	if (parseRecordingCommandUrl(url, authCallbacks.protocol)) {
+		event.preventDefault();
+		void app.whenReady().then(() => recordingCommands.dispatch(url));
+	}
 });
 
 // Register all IPC handlers when app is ready
@@ -917,6 +973,7 @@ app.whenReady().then(async () => {
 	}
 	const startupAuthCallback = authCallbacks.find(process.argv);
 	if (startupAuthCallback) authCallbacks.dispatch(startupAuthCallback);
+	const startupRecordingCommand = recordingCommands.find(process.argv);
 
 	if (process.platform === "win32") {
 		app.setAppUserModelId("dev.recordly.app");
@@ -1030,6 +1087,7 @@ app.whenReady().then(async () => {
 		() => mainWindow,
 		() => sourceSelectorWindow,
 		(recording: boolean, sourceName: string) => {
+			hudRecordingActive = recording;
 			selectedSourceName = sourceName;
 			setHudOverlayRecordingActive(recording);
 			if (shouldUseTray()) {
@@ -1063,6 +1121,7 @@ app.whenReady().then(async () => {
 	}
 
 	createWindow();
+	if (startupRecordingCommand) void recordingCommands.dispatch(startupRecordingCommand);
 	setupAutoUpdates(getUpdateDialogWindow, sendUpdateToastToWindows);
 	if (IS_DEV && process.env.RECORDLY_DEV_PREVIEW_UPDATE === "1") {
 		setTimeout(() => {

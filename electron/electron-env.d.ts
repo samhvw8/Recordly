@@ -629,6 +629,10 @@ interface Window {
 			cursors: Record<string, SystemCursorAsset>;
 			error?: string;
 		}>;
+		/** recordly://record/<command> links, delivered by the main process (urlCommands.ts). */
+		onRecordingCommand: (
+			callback: (command: "start" | "stop" | "pause" | "resume" | "toggle") => void,
+		) => () => void;
 		onStopRecordingFromTray: (callback: () => void) => () => void;
 		onRecordingStateChanged: (
 			callback: (state: { recording: boolean; sourceName: string }) => void,
