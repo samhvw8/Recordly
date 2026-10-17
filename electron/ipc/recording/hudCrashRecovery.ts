@@ -24,6 +24,13 @@ export type HudCrashRecoveryDeps = {
 	finishRecording: (stopped: StopResult) => Promise<StopResult>;
 	/** Deletes a capture the user never started (warm start, countdown). */
 	discardRecording: (path: string) => Promise<void>;
+	/**
+	 * Windows only: a stopped capture whose file still waits for the renderer's mux.
+	 * Resolves to null when there is none or its file is already gone.
+	 */
+	takePendingStoppedVideo: () => Promise<string | null>;
+	/** Runs the Windows mux for the pending stopped video. */
+	muxPendingStoppedVideo: () => Promise<StopResult>;
 	setRecordingState: (recording: boolean) => void;
 	reportRecovered: (result: StopResult, reason: string) => Promise<void>;
 };
@@ -63,6 +70,23 @@ async function recover(deps: HudCrashRecoveryDeps, reason: string) {
 	// A start still waiting for the helper would otherwise finish with no HUD to stop it.
 	await deps.startSettled();
 	if (!deps.isRecordingWithoutStopRequest()) {
+		// On Windows the renderer muxes the audio after its Stop went through. If it died in
+		// between, the stopped file is still waiting. The renderer has already left the
+		// recording state by then, so this can't tell a recording from a countdown; it keeps
+		// whatever file is there rather than risk deleting a real recording.
+		if (await deps.takePendingStoppedVideo()) {
+			console.error(
+				`[hud-crash-recovery] HUD renderer gone (${reason}) before its mux; muxing the stopped recording`,
+			);
+			let muxed: StopResult;
+			try {
+				muxed = await deps.muxPendingStoppedVideo();
+			} catch (error) {
+				muxed = { success: false, error: String(error) };
+			}
+			deps.setRecordingState(false);
+			await deps.reportRecovered(muxed, reason);
+		}
 		return;
 	}
 	const userRecording = deps.isUserRecording();
@@ -85,6 +109,8 @@ async function recover(deps: HudCrashRecoveryDeps, reason: string) {
 	if (!userRecording) {
 		if (result.success && result.path) {
 			await deps.discardRecording(result.path);
+		} else if (!result.success) {
+			console.error("[hud-crash-recovery] Could not stop the countdown capture:", result);
 		}
 		return;
 	}
@@ -111,6 +137,8 @@ export function createHudCrashRecoveryDeps(io: {
 	stopNativeScreenRecording: () => Promise<StopResult>;
 	muxNativeWindowsRecording: () => Promise<StopResult>;
 	clearWindowsPendingVideo: () => void;
+	windowsPendingVideoPath: () => string | null;
+	fileExists: (filePath: string) => Promise<boolean>;
 	deleteFile: (filePath: string) => Promise<void>;
 	telemetryPathFor: (videoPath: string) => string;
 	setRecordingState: (recording: boolean) => void;
@@ -140,7 +168,38 @@ export function createHudCrashRecoveryDeps(io: {
 			await io.deleteFile(videoPath);
 			await io.deleteFile(io.telemetryPathFor(videoPath));
 		},
+		takePendingStoppedVideo: async () => {
+			const pending = io.windowsPendingVideoPath();
+			if (!pending) {
+				return null;
+			}
+			if (await io.fileExists(pending)) {
+				return pending;
+			}
+			// The renderer already deleted it (a cancelled countdown): forget the stale path.
+			io.clearWindowsPendingVideo();
+			return null;
+		},
+		muxPendingStoppedVideo: () => io.muxNativeWindowsRecording(),
 		setRecordingState: io.setRecordingState,
 		reportRecovered: io.reportRecovered,
+	};
+}
+
+/**
+ * Tracks start calls that are still running. `settled` waits for every one of them,
+ * including starts that overlap, not only the latest.
+ */
+export function createStartTracker() {
+	let inFlight: Promise<unknown> = Promise.resolve();
+	return {
+		track:
+			<A extends unknown[], R>(start: (...args: A) => Promise<R>) =>
+			(...args: A): Promise<R> => {
+				const started = start(...args);
+				inFlight = Promise.allSettled([inFlight, started]);
+				return started;
+			},
+		settled: () => inFlight.then(() => undefined),
 	};
 }

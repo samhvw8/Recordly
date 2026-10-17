@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import {
 	createHudCrashRecoveryDeps,
+	createStartTracker,
 	type HudCrashRecoveryDeps,
 	type NativeCaptureState,
 	stopRecordingWhenHudGoes,
@@ -16,6 +17,11 @@ function setup(overrides: Partial<HudCrashRecoveryDeps> = {}) {
 		stopRecording: vi.fn(async () => ({ success: true, path: "/rec/recording-1.mp4" })),
 		finishRecording: vi.fn(async (stopped) => stopped),
 		discardRecording: vi.fn(async () => {}),
+		takePendingStoppedVideo: vi.fn(async () => null as string | null),
+		muxPendingStoppedVideo: vi.fn(async () => ({
+			success: true,
+			path: "/rec/recording-1.mp4",
+		})),
 		setRecordingState: vi.fn(),
 		reportRecovered: vi.fn(async () => {}),
 		...overrides,
@@ -91,7 +97,12 @@ describe("stopRecordingWhenHudGoes", () => {
 		let settle = () => {};
 		let recording = false;
 		const { hud, deps } = setup({
-			startSettled: vi.fn(() => new Promise<void>((resolve) => (settle = resolve))),
+			startSettled: vi.fn(
+				() =>
+					new Promise<void>((resolve) => {
+						settle = resolve;
+					}),
+			),
 			isRecordingWithoutStopRequest: vi.fn(() => recording),
 			isUserRecording: vi.fn(() => false),
 		});
@@ -163,7 +174,9 @@ describe("stopRecordingWhenHudGoes", () => {
 });
 
 describe("createHudCrashRecoveryDeps", () => {
-	function platform(state: Partial<NativeCaptureState>) {
+	function platform(
+		state: Partial<NativeCaptureState> & { pendingPath?: string; pendingFileExists?: boolean },
+	) {
 		const capture: NativeCaptureState = {
 			macActive: false,
 			macStopRequested: false,
@@ -187,6 +200,8 @@ describe("createHudCrashRecoveryDeps", () => {
 				message: "muxed",
 			})),
 			clearWindowsPendingVideo: vi.fn(),
+			windowsPendingVideoPath: vi.fn(() => state.pendingPath ?? null),
+			fileExists: vi.fn(async () => state.pendingFileExists ?? true),
 			deleteFile: vi.fn(async () => {}),
 			telemetryPathFor: (videoPath: string) => `${videoPath}.cursor.json`,
 			setRecordingState: vi.fn(),
@@ -241,5 +256,70 @@ describe("createHudCrashRecoveryDeps", () => {
 		await vi.waitFor(() => expect(io.startSettled).toHaveBeenCalled());
 		await Promise.resolve();
 		expect(io.stopNativeScreenRecording).not.toHaveBeenCalled();
+	});
+
+	it("muxes a stopped Windows recording whose renderer died before its mux", async () => {
+		// After its Stop the renderer has already left the recording state.
+		const { io, crash } = platform({
+			userRecording: false,
+			pendingPath: "C:/rec/recording-1.mp4",
+		});
+
+		crash();
+
+		await vi.waitFor(() => expect(io.reportRecovered).toHaveBeenCalled());
+		expect(io.stopNativeScreenRecording).not.toHaveBeenCalled();
+		expect(io.muxNativeWindowsRecording).toHaveBeenCalledTimes(1);
+		expect(io.deleteFile).not.toHaveBeenCalled();
+		expect(io.setRecordingState).toHaveBeenCalledWith(false);
+	});
+
+	it("only forgets a pending Windows video the renderer already deleted", async () => {
+		const { io, crash } = platform({
+			userRecording: false,
+			pendingPath: "C:/rec/recording-1.mp4",
+			pendingFileExists: false,
+		});
+
+		crash();
+
+		await vi.waitFor(() => expect(io.clearWindowsPendingVideo).toHaveBeenCalled());
+		await Promise.resolve();
+		expect(io.muxNativeWindowsRecording).not.toHaveBeenCalled();
+		expect(io.reportRecovered).not.toHaveBeenCalled();
+	});
+});
+
+describe("createStartTracker", () => {
+	it("waits for every overlapping start, not only the latest", async () => {
+		const starts = createStartTracker();
+		let finishSlow = () => {};
+		const slow = starts.track(
+			() =>
+				new Promise<void>((resolve) => {
+					finishSlow = resolve;
+				}),
+		);
+		const fast = starts.track(async () => {});
+		void slow();
+		await fast();
+
+		let settled = false;
+		void starts.settled().then(() => {
+			settled = true;
+		});
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(settled).toBe(false);
+
+		finishSlow();
+		await vi.waitFor(() => expect(settled).toBe(true));
+	});
+
+	it("settles after a start that fails", async () => {
+		const starts = createStartTracker();
+		await expect(
+			starts.track(async () => Promise.reject(new Error("no helper")))(),
+		).rejects.toThrow();
+		await expect(starts.settled()).resolves.toBeUndefined();
 	});
 });

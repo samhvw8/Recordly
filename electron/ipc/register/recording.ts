@@ -78,6 +78,7 @@ import {
 } from "../recording/mac";
 import {
 	createHudCrashRecoveryDeps,
+	createStartTracker,
 	stopRecordingWhenHudGoes,
 } from "../recording/hudCrashRecovery";
 import { resolveRecordedVideoStoragePath } from "../recording/storagePath";
@@ -440,15 +441,9 @@ export function registerRecordingHandlers(
 ) {
 	// True after set-recording-state(true): a recording the user sees, not a countdown.
 	let userRecordingActive = false;
-	// The start-native-screen-recording call still running, if any.
-	let startInFlight: Promise<unknown> = Promise.resolve();
-	const trackStart =
-		<A extends unknown[], R>(start: (...args: A) => Promise<R>) =>
-		(...args: A) => {
-			const started = start(...args);
-			startInFlight = started.catch(() => undefined);
-			return started;
-		};
+	// Every start-native-screen-recording call still running, so recovery can wait for them.
+	const starts = createStartTracker();
+	const trackStart = starts.track;
 	const hudCrashRecoveryDeps = createHudCrashRecoveryDeps({
 		captureState: () => ({
 			macActive: nativeScreenRecordingActive,
@@ -457,10 +452,16 @@ export function registerRecordingHandlers(
 			windowsStopRequested: windowsCaptureStopRequested,
 			userRecording: userRecordingActive,
 		}),
-		startSettled: () => startInFlight.then(() => undefined),
+		startSettled: starts.settled,
 		stopNativeScreenRecording,
 		muxNativeWindowsRecording: () => muxNativeWindowsRecording(),
 		clearWindowsPendingVideo: () => setWindowsPendingVideoPath(null),
+		windowsPendingVideoPath: () => windowsPendingVideoPath,
+		fileExists: (filePath) =>
+			fs.access(filePath).then(
+				() => true,
+				() => false,
+			),
 		deleteFile: (filePath) => fs.rm(filePath, { force: true }),
 		telemetryPathFor: getTelemetryPathForVideo,
 		setRecordingState,
