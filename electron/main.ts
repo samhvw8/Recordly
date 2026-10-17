@@ -23,7 +23,7 @@ import { createAuthCallbackController } from "./authCallback";
 import {
 	createRecordingCommandController,
 	parseRecordingCommandUrl,
-	type RecordingCommand,
+	type RecordingCommandMessage,
 } from "./urlCommands";
 import { showCursor } from "./cursorHider";
 import { getGpuSwitches } from "./gpuSwitches";
@@ -208,39 +208,24 @@ let hudRecordingActive = false;
 const recordingCommands = createRecordingCommandController({
 	protocol: authCallbacks.protocol,
 	isRecording: () => hudRecordingActive,
-	confirmStart: async () => {
-		// A link usually arrives while another app is in front; without this the question
-		// opens behind it and the user never sees it.
-		app.focus(process.platform === "darwin" ? { steal: true } : undefined);
-		const { response } = await dialog.showMessageBox({
-			type: "question",
-			title: "Start Recording",
-			message: "Start recording your screen?",
-			detail: "A link or another app asked Recordly to start a recording.",
-			buttons: ["Start Recording", "Cancel"],
-			defaultId: 0,
-			cancelId: 1,
-		});
-		return response === 0;
-	},
-	send: (command) => sendRecordingCommandToHud(command),
+	send: (message) => sendRecordingCommandToHud(message),
 });
 
-function sendRecordingCommandToHud(command: RecordingCommand) {
+function sendRecordingCommandToHud(message: RecordingCommandMessage) {
 	// The recording controls live in the HUD; `mainWindow` can be the editor instead.
 	const hud = getHudOverlayWindow();
 	if (hud) {
-		if (command === "start" || command === "toggle") {
+		if (message.confirm) {
 			hud.show();
 		}
-		hud.webContents.send("recording-command", command);
+		hud.webContents.send("recording-command", message);
 		return;
 	}
 	// No HUD yet (only the editor is open, or nothing is): open it as the editor's
 	// "show recording HUD" does, then deliver the command once it has loaded.
 	const created = createHudOverlayWindow();
 	created.webContents.once("did-finish-load", () =>
-		created.webContents.send("recording-command", command),
+		created.webContents.send("recording-command", message),
 	);
 }
 
@@ -950,7 +935,7 @@ app.on("second-instance", (_event, commandLine) => {
 	if (authCallback) authCallbacks.dispatch(authCallback);
 	const recordingCommand = recordingCommands.find(commandLine);
 	if (recordingCommand) {
-		void recordingCommands.dispatch(recordingCommand);
+		recordingCommands.dispatch(recordingCommand);
 		return;
 	}
 	focusOrCreateMainWindow();
@@ -1124,7 +1109,7 @@ app.whenReady().then(async () => {
 	}
 
 	createWindow();
-	if (startupRecordingCommand) void recordingCommands.dispatch(startupRecordingCommand);
+	if (startupRecordingCommand) recordingCommands.dispatch(startupRecordingCommand);
 	setupAutoUpdates(getUpdateDialogWindow, sendUpdateToastToWindows);
 	if (IS_DEV && process.env.RECORDLY_DEV_PREVIEW_UPDATE === "1") {
 		setTimeout(() => {

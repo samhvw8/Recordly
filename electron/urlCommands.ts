@@ -5,8 +5,11 @@
  *
  *   recordly://record/start | stop | pause | resume | toggle
  *
- * Any web page can open a `recordly://` link, so starting a recording (`start`, or `toggle`
- * while idle) asks the user first. Stopping, pausing and resuming run directly.
+ * Any web page can open a `recordly://` link, so a command that would start a recording
+ * (`start`, or `toggle` while idle) is sent with `confirm: true`, and the recording controls
+ * ask the user inside the HUD first. (A system dialog doesn't work here: since macOS 14 an
+ * app can't bring itself to the front, so the dialog opened hidden behind the current app
+ * and, being app-modal, also blocked the HUD.) Stopping, pausing and resuming run directly.
  */
 export const RECORDING_COMMANDS = ["start", "stop", "pause", "resume", "toggle"] as const;
 export type RecordingCommand = (typeof RECORDING_COMMANDS)[number];
@@ -37,19 +40,18 @@ export function startsRecording(command: RecordingCommand, recording: boolean) {
 	return command === "start" || (command === "toggle" && !recording);
 }
 
+export type RecordingCommandMessage = { command: RecordingCommand; confirm: boolean };
+
 type RecordingCommandOptions = {
 	protocol: string;
 	isRecording: () => boolean;
-	/** Asks the user; resolves true to go ahead. */
-	confirmStart: () => Promise<boolean>;
 	/** Delivers the command to the recording controls (the HUD), opening them if needed. */
-	send: (command: RecordingCommand) => void;
+	send: (message: RecordingCommandMessage) => void;
 };
 
 export function createRecordingCommandController({
 	protocol,
 	isRecording,
-	confirmStart,
 	send,
 }: RecordingCommandOptions) {
 	function find(args: readonly string[]) {
@@ -57,13 +59,10 @@ export function createRecordingCommandController({
 	}
 
 	/** Returns false when the URL isn't a recording command (so other handlers can take it). */
-	async function dispatch(rawUrl: string): Promise<boolean> {
+	function dispatch(rawUrl: string): boolean {
 		const command = parseRecordingCommandUrl(rawUrl, protocol);
 		if (!command) return false;
-		if (startsRecording(command, isRecording()) && !(await confirmStart())) {
-			return true;
-		}
-		send(command);
+		send({ command, confirm: startsRecording(command, isRecording()) });
 		return true;
 	}
 

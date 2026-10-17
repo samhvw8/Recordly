@@ -54,7 +54,10 @@
 			"upToDateTitle": "Recordly {{version}} is up to date.",
 			"availableTitle": "Recordly {{version}} is available.",
 			"availableGenericTitle": "An update is available."
-		}
+		},
+		"linkStartPrompt": "A link wants to start recording",
+		"linkStartConfirm": "Start",
+		"linkStartCancel": "Cancel"
 	},
 	"sourceSelector": {
 		"loadingSources": "Loading sources...",

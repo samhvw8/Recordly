@@ -207,24 +207,31 @@ function LaunchWindowContent() {
 		syncSelectedSource,
 	]);
 
-	// recordly://record/<command> links run the HUD's own actions (main asks the user before a
-	// link starts a recording). Without a chosen screen, "start" opens the picker, like the
+	// recordly://record/<command> links run the HUD's own actions. A link that would start a
+	// recording is confirmed here, in the always-visible HUD: a system dialog from a background
+	// app opens hidden on macOS 14+. Without a chosen screen, starting opens the picker, as the
 	// Record button does.
+	const [linkStartPending, setLinkStartPending] = useState(false);
+	const recordFromHud = () => {
+		if (hasSelectedSource) void toggleRecording();
+		else void handlePickOnScreen();
+	};
 	const handleRecordingCommand = useRef<
-		((command: "start" | "stop" | "pause" | "resume" | "toggle") => void) | null
+		| ((message: {
+				command: "start" | "stop" | "pause" | "resume" | "toggle";
+				confirm: boolean;
+		  }) => void)
+		| null
 	>(null);
-	handleRecordingCommand.current = (command) => {
-		const record = () => {
-			if (hasSelectedSource) void toggleRecording();
-			else void handlePickOnScreen();
-		};
+	handleRecordingCommand.current = ({ command, confirm }) => {
+		const start = () => (confirm ? setLinkStartPending(true) : recordFromHud());
 		switch (command) {
 			case "start":
-				if (!recording) record();
+				if (!recording) start();
 				break;
 			case "toggle":
 				if (recording) void toggleRecording();
-				else record();
+				else start();
 				break;
 			case "stop":
 				if (recording) void toggleRecording();
@@ -239,11 +246,21 @@ function LaunchWindowContent() {
 	};
 	useEffect(
 		() =>
-			window.electronAPI?.onRecordingCommand?.((command) =>
-				handleRecordingCommand.current?.(command),
+			window.electronAPI?.onRecordingCommand?.((message) =>
+				handleRecordingCommand.current?.(message),
 			),
 		[],
 	);
+	useEffect(() => {
+		if (!linkStartPending) return;
+		if (recording || finalizing) {
+			setLinkStartPending(false);
+			return;
+		}
+		// An unanswered prompt goes away on its own.
+		const timer = setTimeout(() => setLinkStartPending(false), 30_000);
+		return () => clearTimeout(timer);
+	}, [finalizing, linkStartPending, recording]);
 
 	useEffect(() => {
 		let mounted = true;
@@ -304,6 +321,33 @@ function LaunchWindowContent() {
 			onCancelRecording={cancelRecording}
 			formatTime={formatTime}
 		/>
+	);
+
+	const linkStartControls = (
+		<div className="flex min-w-0 items-center gap-2 px-2">
+			<span className="min-w-0 truncate text-sm">
+				{t("recording.linkStartPrompt", "A link wants to start recording")}
+			</span>
+			<Button
+				variant="destructive"
+				size="sm"
+				className={styles.electronNoDrag}
+				onClick={() => {
+					setLinkStartPending(false);
+					recordFromHud();
+				}}
+			>
+				{t("recording.linkStartConfirm", "Start")}
+			</Button>
+			<Button
+				variant="ghost"
+				size="sm"
+				className={styles.electronNoDrag}
+				onClick={() => setLinkStartPending(false)}
+			>
+				{t("recording.linkStartCancel", "Cancel")}
+			</Button>
+		</div>
 	);
 
 	const idleControls = (
@@ -478,7 +522,13 @@ function LaunchWindowContent() {
 		</div>
 	);
 
-	const hudMode = finalizing ? "finalizing" : recording ? "recording" : "idle";
+	const hudMode = finalizing
+		? "finalizing"
+		: recording
+			? "recording"
+			: linkStartPending
+				? "link-start"
+				: "idle";
 	const useNativeHudBarDrag =
 		platform === "linux" || hudOverlayMousePassthroughSupported === false;
 	const shouldAnimateHudLayout = !recording && !showRecordingWebcamPreview && !isHudDragging;
@@ -559,7 +609,9 @@ function LaunchWindowContent() {
 												? finalizingControls
 												: recording
 													? recordingControls
-													: idleControls}
+													: linkStartPending
+														? linkStartControls
+														: idleControls}
 										</motion.div>
 									</AnimatePresence>
 								</div>

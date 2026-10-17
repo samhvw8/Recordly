@@ -46,52 +46,52 @@ describe("startsRecording", () => {
 });
 
 describe("createRecordingCommandController", () => {
-	function setup(recording: boolean, confirmed: boolean) {
+	function setup(recording: boolean) {
 		const send = vi.fn();
-		const confirmStart = vi.fn(async () => confirmed);
 		const controller = createRecordingCommandController({
 			protocol: "recordly",
 			isRecording: () => recording,
-			confirmStart,
 			send,
 		});
-		return { controller, send, confirmStart };
+		return { controller, send };
 	}
 
-	it("stops without asking", async () => {
-		const { controller, send, confirmStart } = setup(true, false);
-		await expect(controller.dispatch("recordly://record/stop")).resolves.toBe(true);
-		expect(confirmStart).not.toHaveBeenCalled();
-		expect(send).toHaveBeenCalledWith("stop");
+	it("sends stop, pause and resume without asking", () => {
+		const { controller, send } = setup(true);
+		for (const command of ["stop", "pause", "resume"]) {
+			expect(controller.dispatch(`recordly://record/${command}`)).toBe(true);
+		}
+		expect(send.mock.calls.map(([message]) => message)).toEqual([
+			{ command: "stop", confirm: false },
+			{ command: "pause", confirm: false },
+			{ command: "resume", confirm: false },
+		]);
 	});
 
-	it("asks before starting, and starts only when the user agrees", async () => {
-		const agreed = setup(false, true);
-		await agreed.controller.dispatch("recordly://record/start");
-		expect(agreed.confirmStart).toHaveBeenCalledTimes(1);
-		expect(agreed.send).toHaveBeenCalledWith("start");
-
-		const declined = setup(false, false);
-		await declined.controller.dispatch("recordly://record/toggle");
-		expect(declined.confirmStart).toHaveBeenCalledTimes(1);
-		expect(declined.send).not.toHaveBeenCalled();
+	it("marks commands that would start a recording for confirmation", () => {
+		const idle = setup(false);
+		idle.controller.dispatch("recordly://record/start");
+		idle.controller.dispatch("recordly://record/toggle");
+		expect(idle.send.mock.calls.map(([message]) => message)).toEqual([
+			{ command: "start", confirm: true },
+			{ command: "toggle", confirm: true },
+		]);
 	});
 
-	it("toggles a running recording off without asking", async () => {
-		const { controller, send, confirmStart } = setup(true, false);
-		await controller.dispatch("recordly://record/toggle");
-		expect(confirmStart).not.toHaveBeenCalled();
-		expect(send).toHaveBeenCalledWith("toggle");
+	it("toggles a running recording off without asking", () => {
+		const { controller, send } = setup(true);
+		controller.dispatch("recordly://record/toggle");
+		expect(send).toHaveBeenCalledWith({ command: "toggle", confirm: false });
 	});
 
-	it("leaves other URLs to other handlers", async () => {
-		const { controller, send } = setup(false, true);
-		await expect(controller.dispatch("recordly://auth/callback?code=1")).resolves.toBe(false);
+	it("leaves other URLs to other handlers", () => {
+		const { controller, send } = setup(false);
+		expect(controller.dispatch("recordly://auth/callback?code=1")).toBe(false);
 		expect(send).not.toHaveBeenCalled();
 	});
 
 	it("finds the command among command-line arguments", () => {
-		const { controller } = setup(false, true);
+		const { controller } = setup(false);
 		expect(
 			controller.find(["/Applications/Recordly.app", "--flag", "recordly://record/pause"]),
 		).toBe("recordly://record/pause");

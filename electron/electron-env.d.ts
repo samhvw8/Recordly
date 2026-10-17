@@ -631,7 +631,10 @@ interface Window {
 		}>;
 		/** recordly://record/<command> links, delivered by the main process (urlCommands.ts). */
 		onRecordingCommand: (
-			callback: (command: "start" | "stop" | "pause" | "resume" | "toggle") => void,
+			callback: (message: {
+				command: "start" | "stop" | "pause" | "resume" | "toggle";
+				confirm: boolean;
+			}) => void,
 		) => () => void;
 		onStopRecordingFromTray: (callback: () => void) => () => void;
 		onRecordingStateChanged: (
